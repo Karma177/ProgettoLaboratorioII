@@ -6,6 +6,26 @@
 typedef struct mr *mr_t;
 
 /*
+    Per gli studenti tenuti a realizzare l’addendum, l’interfaccia pubblica dovrà essere estesa per
+    consentire all’utente di specificare una funzione di hashing deterministica per assegnare i token
+    ai thread reducer interni al processo reducer
+*/
+
+/* Tipo di funzione di hashing deterministica (Addendum) */
+typedef size_t (*mr_hash_t)(
+    const char *token,
+    size_t token_len,
+    void *user_arg
+);
+
+
+int mr_attr_set_hash_function(
+    mr_attr_t *attr,
+    mr_hash_t hash,
+    void *hash_arg
+); 
+
+/*
     Attributi di configurazione del framework
     mapper_threads:
         numero di thread usati nel processo mapper.
@@ -27,6 +47,8 @@ typedef struct
      */
     size_t queue_size;
     const char *log_file;
+    mr_hash_t hash; // Addendum
+    void *hash_arg; // Addendum
 } mr_attr_t;
 
 /*
@@ -141,23 +163,6 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path); // Blocc
 
 int mr_destroy(mr_t mr);
 
-/*
-    Per gli studenti tenuti a realizzare l’addendum, l’interfaccia pubblica dovrà essere estesa per
-    consentire all’utente di specificare una funzione di hashing deterministica per assegnare i token
-    ai thread reducer interni al processo reducer
-*/
-// NOTA: Questa è una funzione placeholder che dice al compilatore quali tipi di parametri aspettarsi.
-// La funzione reale è definita dall'utente e deve essere implementata in modo coerente con questa dichiarazione.
-typedef size_t (*mr_hash_t)(
-    const char *token,
-    size_t token_len,
-    void *user_arg
-);
 
-int mr_attr_set_hash_function(
-    mr_attr_t *attr,
-    mr_hash_t hash,
-    void *hash_arg
-); 
 
 #endif

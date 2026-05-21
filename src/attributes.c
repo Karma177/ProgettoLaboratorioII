@@ -2,32 +2,23 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include "../include/mr.h"
+#include <util/mr_common.h>
 #include <time.h>
 #include <string.h>
 
-struct mr {
-    mr_attr_t config;     // Una copia locale della configurazione (thread, code, log)
-    mr_mapper_t mapper_f;   // Il puntatore alla funzione Mapper dell'utente
-    mr_reducer_t reducer_f; // Il puntatore alla funzione Reducer dell'utente
-    void *user_arg;       // L'argomento opzionale passato dall'utente
-    mr_hash_t hash_f;
-    pid_t mapper;
-    pid_t reducer;
-};
+
 
 // TODO: reindirizzare errno a logger, e dove vi è "return -1" scrivere la causa nei log. 
 
-int mr_setup(){
-    mr_attr_t *attributes = NULL;
-    if (mr_attr_init(&attributes) == -1 || attributes == NULL)
+int mr_attr_setup(){
+    mr_attr_t attributes; // Allocata staticamente sullo stack
+    if (mr_attr_init(&attributes) == -1) // Passiamo l'indirizzo per inizializzarla
         return -1;
-    mr_attr_set_mapper_threads(attributes, 10);
-    mr_attr_set_reducer_threads(attributes, 10);
-    mr_attr_set_queue_size(attributes, 20);
-    mr_attr_set_log_file(attributes, generate_log_header());
+    mr_attr_set_mapper_threads(&attributes, 10);
+    mr_attr_set_reducer_threads(&attributes, 10);
+    mr_attr_set_queue_size(&attributes, 20);
+    mr_attr_set_log_file(&attributes, generate_log_header());
     // TODO: print attributes su logs (e su console)
-    //mr_attr_set_hash_function()
     
     return 0;
 }
@@ -49,18 +40,18 @@ int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t 
     return 0;
 }
 
-int mr_attr_init(mr_attr_t **attr){
-    mr_attr_t *temp = malloc(sizeof(mr_attr_t));
-    if (temp == NULL) {
+int mr_attr_init(mr_attr_t *attr){
+    if (attr == NULL) {
         return -1;
     }
 
-    temp->mapper_threads = 3;
-    temp->reducer_threads = 3;
-    temp->queue_size = 10;
-    temp->log_file = NULL;
+    attr->mapper_threads = 3;
+    attr->reducer_threads = 3;
+    attr->queue_size = 10;
+    attr->log_file = NULL;
+    attr->hash = NULL;
+    attr->hash_arg = NULL;
     
-    *attr = temp;
     return 0;
 }
 
@@ -110,11 +101,13 @@ int mr_attr_set_log_file(mr_attr_t *attr, const char *path) {
 int mr_attr_set_hash_function(mr_attr_t *attr, mr_hash_t hash, void *hash_arg) {
     if (attr == NULL)
         return -1;
-    mr_hash_t temp = malloc(sizeof(mr_hash_t));
-    // TODO: to be implemented
+    
+    attr->hash = hash;
+    attr->hash_arg = hash_arg;
     
     return 0;
 }
+
 
 char* generate_log_header(){
     time_t now = time(NULL);
