@@ -1,26 +1,28 @@
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <util/mr_common.h>
-#include <time.h>
 #include <string.h>
+#include "mr_common.h"
 
 
 
-// TODO: reindirizzare errno a logger, e dove vi è "return -1" scrivere la causa nei log. 
+// TODO: reindirizzare errno a logger, e dove vi è "return -1" o NULL scrivere la causa nei log. 
 
-int mr_attr_setup(){
-    mr_attr_t attributes; // Allocata staticamente sullo stack
-    if (mr_attr_init(&attributes) == -1) // Passiamo l'indirizzo per inizializzarla
-        return -1;
-    mr_attr_set_mapper_threads(&attributes, 10);
-    mr_attr_set_reducer_threads(&attributes, 10);
-    mr_attr_set_queue_size(&attributes, 20);
-    mr_attr_set_log_file(&attributes, generate_log_header());
+mr_attr_t* mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesize, char* logfile){
+    mr_attr_t *attributes = malloc(sizeof(mr_attr_t)); 
+    if (attributes == NULL || mr_attr_init(attributes) == -1)
+        return NULL;
+    mr_attr_set_mapper_threads(attributes, mapthreads);
+    mr_attr_set_reducer_threads(attributes, reducerthreads);
+    mr_attr_set_queue_size(attributes, queuesize);
+    if(logfile == NULL)
+        logfile = generate_log_header();
+    mr_attr_set_log_file(attributes, logfile);
     // TODO: print attributes su logs (e su console)
     
-    return 0;
+    return attributes;
 }
 
 int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t reducer, void *user_arg){
@@ -136,3 +138,25 @@ char* generate_log_header(){
     
     return logfile;
 }
+
+int mr_set_mapper_pid(mr_t mr, pid_t pid){
+    if(mr == NULL)
+        return -1;
+    mr->mapper = pid;
+    return 0;
+}
+
+int mr_set_reducer_pid(mr_t mr, pid_t pid){
+    if(mr == NULL)
+        return -1;
+    mr->reducer = pid;
+    return 0;
+}
+
+int mr_set_main_pid(mr_t mr, pid_t pid){
+    if(mr == NULL)
+        return -1;
+    mr->main = pid;
+    return 0;
+}
+
