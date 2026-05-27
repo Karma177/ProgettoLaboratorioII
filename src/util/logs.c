@@ -3,7 +3,36 @@
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
 #include "mr_common.h"
+
+static mr_t global_mr = NULL;
+
+void set_log_mr(mr_t mr) {
+    global_mr = mr;
+}
+
+void mr_log(const char* message){
+    if (global_mr == NULL) return; 
+    
+    char* process = "UNKNOWN";
+    if(getpid() == global_mr->mapper) process = "MAPPER";
+    else if(getpid() == global_mr->reducer) process = "REDUCER";
+    else if(getpid() == global_mr->main) process = "MAIN";
+
+    write_to_log(global_mr->config.log_file, process, message, 0);
+}
+
+void mr_err(const char* message){
+    if (global_mr == NULL) return; 
+    
+    char* process = "UNKNOWN";
+    if(getpid() == global_mr->mapper) process = "MAPPER";
+    else if(getpid() == global_mr->reducer) process = "REDUCER";
+    else if(getpid() == global_mr->main) process = "MAIN";
+
+    write_to_log(global_mr->config.log_file, process, message, 1);
+}
 
 char* get_log_file_attr(mr_attr_t attr){
     return attr.log_file;
@@ -16,12 +45,24 @@ char* get_log_file_mr(mr_t mapreducer){
 }
 
 
-void write_to_log(const char* filepath, const char* process_name, const char* message) {
-    if (filepath == NULL || message == NULL || process_name == NULL) return;
+void write_to_log(const char* log_filename, const char* process_name, const char* message, int is_error) {
+    if (log_filename == NULL || message == NULL || process_name == NULL) return;
+
+    // Aggiungiamo "/logs/" al filepath
+    const char* prefix = "logs/";
+    size_t new_len = strlen(prefix) + strlen(log_filename) + 1;
+    char* full_path = malloc(new_len);
+    if(full_path == NULL) return;
+
+    strcpy(full_path, prefix);
+    strcat(full_path, log_filename);
 
     // Apre il file in modalità append
-    FILE *log_file = fopen(filepath, "a");
-    if (log_file == NULL) return;
+    FILE *log_file = fopen(full_path, "a");
+    if (log_file == NULL) {
+        free(full_path);
+        return;
+    }
 
     // Setup della struttura per il File Lock
     struct flock fl;
@@ -40,7 +81,16 @@ void write_to_log(const char* filepath, const char* process_name, const char* me
     char time_str[20];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
 
-    fprintf(log_file, "[%s] [%s] %s\n", time_str, process_name, message);
+    // Sequenze di escape ANSI per i colori sul terminale (e spesso supportati dai visualizzatori di file di log)
+    const char* color_red = "\x1B[31m";
+    const char* color_reset = "\x1B[0m";
+
+    if (is_error) {
+        fprintf(log_file, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
+    } else {
+        fprintf(log_file, "[%s] [%s] INFO: %s\n", time_str, process_name, message);
+    }
+    
     fflush(log_file); // Forza la scrittura fisica su disco 
 
     // Rilascia il lock
@@ -49,4 +99,37 @@ void write_to_log(const char* filepath, const char* process_name, const char* me
 
     // Chiude il descrittore
     fclose(log_file);
+    free(full_path);
+}
+
+
+
+
+
+
+char* generate_log_header(){
+    time_t now = time(NULL);
+    struct tm tm_now;
+    char timestr[64];
+
+    if (now == (time_t)-1) {
+        return NULL;
+    }
+
+    localtime_r(&now, &tm_now);
+    if (strftime(timestr, sizeof(timestr), "%Y-%m-%d_%H-%M-%S", &tm_now) == 0) {
+        return NULL;
+    }
+
+    // (Senza l'aggiunta di `logs/` visto che ora lo fa write_to_log)
+    size_t len = strlen(timestr) + strlen(".log") + 1;
+    char *logfile = malloc(len);
+    if (logfile == NULL) {
+        return NULL;
+    }
+
+    strcpy(logfile, timestr);
+    strcat(logfile, ".log");
+    
+    return logfile;
 }
