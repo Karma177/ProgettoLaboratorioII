@@ -163,6 +163,8 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path); // Blocc
 
 int mr_destroy(mr_t mr);
 
+// Aggiunta rispetto al testo.
+mr_attr_t* mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesize, char* logfile);
 
 
 #endif

@@ -102,31 +102,18 @@ void write_to_log(const char* log_filename, const char* process_name, const char
     free(full_path);
 }
 
-
-
-
-
-
 char* generate_log_header(){
     time_t now = time(NULL);
     struct tm tm_now;
     char timestr[64];
 
-    if (now == (time_t)-1) {
-        return NULL;
-    }
-
+    if (now == (time_t)-1) return NULL;
     localtime_r(&now, &tm_now);
-    if (strftime(timestr, sizeof(timestr), "%Y-%m-%d_%H-%M-%S", &tm_now) == 0) {
-        return NULL;
-    }
+    if (strftime(timestr, sizeof(timestr), "%Y-%m-%d_%H-%M-%S", &tm_now) == 0) return NULL;
 
-    // (Senza l'aggiunta di `logs/` visto che ora lo fa write_to_log)
     size_t len = strlen(timestr) + strlen(".log") + 1;
     char *logfile = malloc(len);
-    if (logfile == NULL) {
-        return NULL;
-    }
+    if (logfile == NULL) return NULL;
 
     strcpy(logfile, timestr);
     strcat(logfile, ".log");

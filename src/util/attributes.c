@@ -9,8 +9,11 @@
 
 
 // TODO: reindirizzare errno a logger, e dove vi è "return -1" o NULL scrivere la causa nei log. 
-
-mr_attr_t mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesize, char* logfile){
+// AGGIUNTA RISPETTO AL TESTO: per semplificare operazioni di debug
+// Utilizza i metodi che sarebbero stati utilizzati dall'utente che usa la nostra libreria, in un unica volta.
+// Gli altri metodi rimangono comunque a dispozione dell'utente in caso volesse cambiare qualcosa.
+// In caso vengano forniti parametri nulli utilizza come fallback quelli definiti in mr_attr_init.
+mr_attr_t* mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesize, char* logfile){
     mr_attr_t attributes;
     
     // Inizializza con i valori di default
@@ -18,12 +21,14 @@ mr_attr_t mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesi
         mr_err("mr_attr_setup: fallita l'inizializzazione degli attributi (mr_attr_init).");
         // Ritorna una struttura vuota/azzerata in caso di errore
         memset(&attributes, 0, sizeof(mr_attr_t));
-        return attributes;
+        return &attributes;
     }
-    
-    mr_attr_set_mapper_threads(&attributes, mapthreads);
-    mr_attr_set_reducer_threads(&attributes, reducerthreads);
-    mr_attr_set_queue_size(&attributes, queuesize);
+    if(mapthreads!=NULL && mapthreads > 0 && mapthreads < 200)
+        mr_attr_set_mapper_threads(&attributes, mapthreads);
+    if(reducerthreads!=NULL && reducerthreads > 0 && reducerthreads < 200)
+        mr_attr_set_reducer_threads(&attributes, reducerthreads);
+    if(queuesize =! NULL && queuesize > 0 && queuesize < 200)
+        mr_attr_set_queue_size(&attributes, queuesize);
     
     if(logfile == NULL) {
         logfile = generate_log_header();
@@ -31,7 +36,7 @@ mr_attr_t mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesi
     mr_attr_set_log_file(&attributes, logfile);
     // TODO: print attributes su logs (e su console)
     
-    return attributes;
+    return &attributes;
 }
 
 int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t reducer, void *user_arg){
@@ -164,7 +169,18 @@ int mr_set_main_pid(mr_t mr, pid_t pid){
 }
 
 int mr_destroy(mr_t mr){
-    // TODO: TO BE IMPLEMENTED
+    if (mr == NULL) {
+        return -1;
+    }
+
+    // Libera il file di log se è stato allocato dinamicamente
+    if (mr->config.log_file != NULL) {
+        free((void *)mr->config.log_file);
+        mr->config.log_file = NULL;
+    }
+
+    // Libera la struttura principale
+    free(mr);
     return 0;
 }
 
