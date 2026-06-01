@@ -37,8 +37,7 @@ int main(int argc, char *argv[]) {
         printf("Errore: mr_attr_setup fallito.\n");
         return EXIT_FAILURE;
     }
-
-    // TODO: come utilizzare user_args?
+ 
     if (mr_create(&mr, attr, dummy_mapper, dummy_reducer, NULL) != 0) {
         printf("Errore: mr_create fallito. Forse parametri mancanti?\n");
         return EXIT_FAILURE;

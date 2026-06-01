@@ -34,11 +34,11 @@ void mr_err(const char* message){
     write_to_log(global_mr->config.log_file, process, message, 1);
 }
 
-char* get_log_file_attr(mr_attr_t attr){
+const char* get_log_file_attr(mr_attr_t attr){
     return attr.log_file;
 }
 
-char* get_log_file_mr(mr_t mapreducer){
+const char* get_log_file_mr(mr_t mapreducer){
     if(mapreducer == NULL)
         return NULL;
     return mapreducer->config.log_file;
@@ -87,6 +87,7 @@ void write_to_log(const char* log_filename, const char* process_name, const char
 
     if (is_error) {
         fprintf(log_file, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
+        fprintf(stderr, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
     } else {
         fprintf(log_file, "[%s] [%s] INFO: %s\n", time_str, process_name, message);
     }

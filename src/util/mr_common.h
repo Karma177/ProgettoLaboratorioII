@@ -1,7 +1,8 @@
-#include "../include/mr.h"
+#include "../../include/mr.h"
 #include <sys/types.h>
 
 // MapReduce utils
+#define LIMITE_RAGIONEVOLE (4 * 1024 * 1024)
 struct mr {
     mr_attr_t config;     // Una copia locale della configurazione (thread, code, log)
     mr_mapper_t mapper_f;   // Il puntatore alla funzione Mapper dell'utente
@@ -19,9 +20,16 @@ int mr_set_main_pid(mr_t mr, pid_t pid);
 
 // Logs
 char* generate_log_header();
-char* get_log_file_attr(mr_attr_t attr);
-char* get_log_file_mr(mr_t mapreducer);
+const char* get_log_file_attr(mr_attr_t attr);
+const char* get_log_file_mr(mr_t mapreducer);
 void write_to_log(const char* filepath, const char* process_name, const char* message, int is_error);
 void mr_log(const char* message);
 void mr_err(const char* message);
 void set_log_mr(mr_t mr);
+
+// Mapper
+int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer);
+
+// Lettura/Scrittura esatta su file descriptor
+ssize_t readn(int fd, void *buf, size_t n);
+ssize_t writen(int fd, const void *buf, size_t n);

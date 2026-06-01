@@ -1,12 +1,28 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <util/mr_common.h>
+#include "util/mr_common.h"
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/wait.h>
 
+
+// Forward declarations per evitare implicit declarations ed errori C99
+int start_reducer(void);
+int start_main_job(mr_t mr, const char *input_path, const char *output_path, int mapper_write_fd, int reducer_read_fd);
+int serialize_and_send(mr_t mr, const char* filepath, int write_fd, unsigned long *line_counter);
+int listen_to_reducer(int read_fd);
+int wait_for_others(mr_t mr);
+
+typedef struct filename_node {
+    char* path;
+    struct filename_node* next;
+} filename_node;
+
+filename_node* insert_sorted(filename_node* head, const char* path);
+filename_node* scan_directory(const char* dir_path, filename_node* head);
 
 int mr_start(mr_t mr, const char *input_path, const char *output_path){
     if (mr == NULL || input_path == NULL || output_path == NULL) {
@@ -39,8 +55,11 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         mr_log("Pipe inizializzate.");
 
         int ret; 
-        if(ret = start_mapper() != 0)
-            mr_err(strcat("Il processo mapper ha terminato con un errore. Errore: ",ret));
+        if((ret = start_mapper(mr, STDIN_FILENO, STDOUT_FILENO)) != 0) {
+            char err_msg[128];
+            snprintf(err_msg, sizeof(err_msg), "Il processo mapper ha terminato con un errore. Errore: %d", ret);
+            mr_err(err_msg);
+        }
         return ret;
     }
     mr_set_mapper_pid(mr, mapper_pid);
@@ -56,8 +75,11 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         mr_log("Pipe inizializzate.");
 
         int ret; 
-        if(ret = start_reducer() != 0)
-            mr_err(strcat("Il processo reducer ha terminato con un errore. Errore: ",ret));
+        if((ret = start_reducer()) != 0) {
+            char err_msg[128];
+            snprintf(err_msg, sizeof(err_msg), "Il processo reducer ha terminato con un errore. Errore: %d", ret);
+            mr_err(err_msg);
+        }
         return ret;
     }
     mr_set_reducer_pid(mr, reducer_pid);
@@ -73,16 +95,16 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
 }
 
 // Sezione "Serialize and Send": tutto ciò necessario alla scansione e l'invio dei file al mapper.
-int start_main_job(mr_t mr, const char *input_path, const char *output_path, int *main_to_mapper, int *reducer_to_main){
+int start_main_job(mr_t mr, const char *input_path, const char *output_path, int mapper_write_fd, int reducer_read_fd){
     struct stat path_stat;
     if (stat(input_path, &path_stat) != 0) {
         mr_err("Il percorso specificato per l'input non è valido.");
         return -1;
     }
-
+    unsigned long line_n = 0;
     if (S_ISREG(path_stat.st_mode)) {
         mr_log("L'input è un file singolo..");
-        serialize_and_send(mr, input_path, main_to_mapper);
+        serialize_and_send(mr, input_path, mapper_write_fd, &line_n);
     } else if (S_ISDIR(path_stat.st_mode)) {
         mr_log("L'input è una directory..");
         
@@ -92,7 +114,7 @@ int start_main_job(mr_t mr, const char *input_path, const char *output_path, int
         // Scorriamo la lista ordinata e inviamo i file
         filename_node* curr = head;
         while (curr != NULL) {
-            serialize_and_send(mr, curr->path, main_to_mapper);
+            serialize_and_send(mr, curr->path, mapper_write_fd, &line_n);
 
             // Pulizia della lista in-place
             filename_node* temp = curr;
@@ -104,19 +126,13 @@ int start_main_job(mr_t mr, const char *input_path, const char *output_path, int
         mr_log("Input non valido. Non è né directory né file.");
         return -1;
     }
-    close(main_to_mapper[1]);
-    listen_to_reducer(reducer_to_main);
-    close(reducer_to_main[0]);
+    close(mapper_write_fd);
+    listen_to_reducer(reducer_read_fd);
+    close(reducer_read_fd);
     wait_for_others(mr);
     mr_destroy(mr);
     return 0;
 }
-
-// Nodo per una lista collegata di stringhe
-typedef struct filename_node {
-    char* path;
-    struct filename_node* next;
-} filename_node;
 
 // Inserimento ordinato (lessicografico)
 filename_node* insert_sorted(filename_node* head, const char* path) {
@@ -174,57 +190,94 @@ filename_node* scan_directory(const char* dir_path, filename_node* head) {
     return head;
 }
 
-int serialize_and_send(mr_t mr, const char* filepath, int *main_to_mapper){
+int serialize_and_send(mr_t mr, const char* filepath, int write_fd, unsigned long *line_counter) {
     FILE* file = fopen(filepath, "r");
     if (!file) {
-        mr_err("Impossibile aprire il file per la serializzazione.");
+        char err_msg[512];
+        snprintf(err_msg, sizeof(err_msg), "Impossibile aprire il file per la serializzazione: %s", filepath);
+        mr_err(err_msg);
         return -1;
     }
     
-    // TODO: implementare logica di lettura riga per riga
     char* line = NULL;
     size_t len = 0;
-    while (getline(&line, &len, file) != -1) {
-        // Invia la riga al mapper
-        write(main_to_mapper[1], line, strlen(line));
+    ssize_t read_bytes;
+    int file_name_len = strlen(filepath);
+
+    // Leggiamo il file riga per riga
+    while ((read_bytes = getline(&line, &len, file)) != -1) {
+        (*line_counter)++;
+        if (read_bytes > 0 && line[read_bytes - 1] == '\n') {
+            line[read_bytes - 1] = '\0';
+            read_bytes--;
+        }
+        int line_len = read_bytes;
+
+        // Inviamo la lunghezza del nome del file 
+        if (writen(write_fd, &file_name_len, sizeof(int)) < 0) break;
+
+        // Inviamo i caratteri del nome del file 
+        if (writen(write_fd, filepath, file_name_len) < 0) break;
+
+        // Inviamo il numero della riga 
+        size_t current_line_num = *line_counter;
+        if (writen(write_fd, &current_line_num, sizeof(size_t)) < 0) break;
+
+        // Inviamo la lunghezza del testo della riga
+        if (writen(write_fd, &line_len, sizeof(int)) < 0) break;
+
+        // Inviamo i caratteri effettivi della riga 
+        if (writen(write_fd, line, line_len) < 0) break;
     }
+
     free(line);
     fclose(file);
     return 0;
 }
 
 // Sezione di ascolto dal reducer: tutto ciò che è necessario per l'ascolto dal reducer.
-
-int listen_to_reducer(int *reducer_to_main){
+int listen_to_reducer(int read_fd){
     // TODO: implementare logica di ascolto del reducer e scrittura su output_path
     int token_length;
-    while(readn(reducer_to_main[0], &token_length, sizeof(int)) == sizeof(int)){
+    while(readn(read_fd, &token_length, sizeof(int)) == sizeof(int)){
         // Prendiamo il token
         // TODO: capire "limite ragionevole"
-        if(token_length <= 0 || token_length > 200000){
+        if(token_length <= 0 || token_length > LIMITE_RAGIONEVOLE){
             errno = EINVAL;
-            mr_err(strcat("Lunghezza token non valida ricevuta dal Reducer: ", token_length));
+            char err_msg[128];
+            snprintf(err_msg, sizeof(err_msg), "Lunghezza token non valida ricevuta dal Reducer: %d", token_length);
+            mr_err(err_msg);
             return -1;
         }
         char *token = malloc(token_length+1); // +1 per \0
-        readn(reducer_to_main[0], token, token_length);
+        readn(read_fd, token, token_length);
         token[token_length] = '\0';
 
         // Prendiamo il risultato
         int result_length;
-        readn(reducer_to_main[0], &result_length, sizeof(int));
+        readn(read_fd, &result_length, sizeof(int));
         // TODO: capire "limite ragionevole"
-        if(result_length <= 0 || result_length > 200000){
+        if(result_length <= 0 || result_length > LIMITE_RAGIONEVOLE){
             errno = EINVAL;
-            mr_err(strcat("Lunghezza risultato di elaborazione del token non valida ricevuta dal Reducer: ", token_length));
+            char err_msg[128];
+            snprintf(err_msg, sizeof(err_msg), "Lunghezza risultato non valida ricevuta dal Reducer: %d", result_length);
+            mr_err(err_msg);
             return -1;
         }
 
         void *result = NULL;
         if (result_length > 0) {
             result = malloc(result_length);
-            readn(reducer_to_main[0], result, result_length);
+            if (!result) {
+                free(token);
+                return -1;
+            }
+            readn(read_fd, result, result_length);
         }
+
+        // TODO: Scrivere sul file di output
+        free(token);
+        if (result) free(result);
     }
     return 0;
 }
@@ -239,7 +292,7 @@ ssize_t readn(int fd, void *buf, size_t n) {
         if ((nread = read(fd, ptr, left)) < 0) {
             if (errno == EINTR) nread = 0; // Se interrotto da un segnale, ricomincia
             else return -1;                // Errore vero
-        } else if (!nread == 0) { // else EOF: la pipe è stata chiusa dall'altra parte
+        } else if (!(nread == 0)) { // else EOF: la pipe è stata chiusa dall'altra parte
             left -= nread;
             ptr += nread;
         }
@@ -247,12 +300,30 @@ ssize_t readn(int fd, void *buf, size_t n) {
     return (n - left); // Ritorna quanti byte è riuscito a leggere davvero
 }
 
+// Scrive ESATTAMENTE 'n' byte bloccandosi finché non li ha scritti tutti (o finché non c'è errore)
+ssize_t writen(int fd, const void *buf, size_t n) {
+    size_t left = n;
+    ssize_t nwritten;
+    const char *ptr = buf;
+
+    while (left > 0) {
+        if ((nwritten = write(fd, ptr, left)) <= 0) {
+            if (nwritten < 0 && errno == EINTR) {
+                nwritten = 0; // Se interrotto da un segnale, ricomincia
+            } else {
+                return -1; // Errore vero o pipe chiusa
+            }
+        }
+        left -= nwritten;
+        ptr += nwritten;
+    }
+    return n; // Ritorna quanti byte è riuscito a scrivere davvero
+}
 
 // Sezione dedicata ai metodi di pulizia e termine del programma
 int wait_for_others(mr_t mr){
-    waitpid(mr->mapper);
-    waitpid(mr->reducer);
+    waitpid(mr->mapper, NULL, 0);
+    waitpid(mr->reducer, NULL, 0);
 
     return 0;
 }
-

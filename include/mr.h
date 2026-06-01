@@ -18,13 +18,6 @@ typedef size_t (*mr_hash_t)(
     void *user_arg
 );
 
-
-int mr_attr_set_hash_function(
-    mr_attr_t *attr,
-    mr_hash_t hash,
-    void *hash_arg
-); 
-
 /*
     Attributi di configurazione del framework
     mapper_threads:
@@ -50,6 +43,12 @@ typedef struct
     mr_hash_t hash; // Addendum
     void *hash_arg; // Addendum
 } mr_attr_t;
+
+int mr_attr_set_hash_function(
+    mr_attr_t *attr,
+    mr_hash_t hash,
+    void *hash_arg
+);
 
 /*
     Riga logica di un file , vista dalla funzione mapper.
