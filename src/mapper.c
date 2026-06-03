@@ -1,15 +1,13 @@
 #include "util/mr_common.h"
+#include <string.h>
 #include <threads.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <unistd.h>
 
 typedef struct Nodo {
-    char *file_name;
-    size_t file_name_len;
-    size_t line_number;
-    char *line;
-    size_t line_length;
-    struct Nodo *next;
+    mr_file_line_t data;
+    struct Nodo *next; 
 } node_t;
 
 typedef struct {
@@ -24,12 +22,30 @@ typedef struct {
     cnd_t empty; // CondVar per far aspettare i worker se non ci sono elementi
 } mr_t_list;
 
+typedef struct {
+    mr_t_list *coda;
+    int main_to_mapper;
+} reader_args_t;
+
+typedef struct {
+    mr_t_list *list;
+    mr_mapper_t function;
+    int mapper_to_reducer; // lato di scrittura 
+    void *user_arg;        
+} worker_args_t;
+
 mr_t_list* create_list(int queuesize);
 node_t* create_node(char* file_name, size_t file_name_len, size_t line_number, char* line, size_t line_length);
-int queue(mr_t_list *list, node_t *node);
 node_t* dequeue(mr_t_list *list);
-int read_item_from_pipe(mr_t_list* coda, int fd_pipe);
+void destroy_list(mr_t_list *list);
+int queue(mr_t_list *list, node_t *node);
+int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item);
 int main_listener(mr_t_list* coda, int main_to_mapper);
+int reader_thread_func(void *arg);
+int worker_thread_func(void *arg);
+int framework_emit_pair(const char *token, const void *value, size_t value_size, void *emit_arg);
+
+
 
 // Entry point per le funzioni del mapper
 int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
@@ -39,21 +55,136 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
         return -1;
     }
 
-    // TODO: thread reader dal main
-    int status = main_listener(list, main_to_mapper);
+    // Alloca gli argomenti per il thread reader
+    reader_args_t *args = malloc(sizeof(reader_args_t));
+    if (args == NULL) {
+        mr_err("Impossibile allocare gli argomenti del thread reader.");
+        destroy_list(list);
+        return -1;
+    }
+    args->coda = list;
+    args->main_to_mapper = main_to_mapper;
 
+    thrd_t reader_thread;
+    if (thrd_create(&reader_thread, reader_thread_func, args) != thrd_success) {
+        mr_err("Impossibile creare il thread reader.");
+        free(args);
+        destroy_list(list);
+        return -1;
+    }
+
+    thrd_t *workers = malloc(sizeof(thrd_t) * mr->config.mapper_threads);
+    int workers_created = 0;
+    int success = 0;
+
+    if (workers == NULL) {
+        mr_err("Impossibile allocare l'array dei thread worker.");
+        success = -1;
+    } else {
+        worker_args_t w_args;
+        w_args.list = list;
+        w_args.function = mr->mapper_f;
+        w_args.mapper_to_reducer = mapper_to_reducer;
+        w_args.user_arg = mr->user_arg;
+
+        while (workers_created < mr->config.mapper_threads) {
+            if (thrd_create(&workers[workers_created], worker_thread_func, &w_args) != thrd_success) {
+                mr_err("Impossibile creare il thread worker.");
+                success = -1;
+                break;
+            }
+            workers_created++;
+        }
+    }
+
+    // in caso di errore liberiamo tutte le risorse
+    if (success == -1) {
+        mtx_lock(&list->mutex);
+        list->closed = 1;
+        cnd_broadcast(&list->empty);
+        cnd_broadcast(&list->full);
+        mtx_unlock(&list->mutex);
+
+        close(main_to_mapper);
+    }
+
+    // pulizia memoria a termine del processo
+    // attesa il thread reader (se creato)
+    thrd_join(reader_thread, NULL);
+
+    // attesa thread worker creati
+    for (int j = 0; j < workers_created; j++) thrd_join(workers[j], NULL);
+    if (workers) free(workers);
+    destroy_list(list);
+
+    return success;
+}
+
+int framework_emit_pair(const char *token, const void *value, size_t value_size, void *emit_arg) {
+    int fd_pipe = *(int *)emit_arg;
+
+    int token_len = strlen(token);
+    int value_len = value_size;
+
+    if (token_len <= 0 || token_len > LIMITE_RAGIONEVOLE || value_len < 0 || value_len > LIMITE_RAGIONEVOLE) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // Spediamo nell'ordine del protocollo: len_token, token, len_value, value
+    if (writen(fd_pipe, &token_len, sizeof(int)) < 0) return -1;
+    if (writen(fd_pipe, token, token_len) < 0) return -1;
+    if (writen(fd_pipe, &value_len, sizeof(int)) < 0) return -1;
+    if (value_len > 0 && value != NULL) {
+        if (writen(fd_pipe, value, value_len) < 0) return -1;
+    }
+
+    return 0;
+}
+
+int reader_thread_func(void *arg) {
+    reader_args_t *args = (reader_args_t *)arg;
+    
+    int status = main_listener(args->coda, args->main_to_mapper);
+    
+    free(args); 
     return status;
 }
 
+int worker_thread_func(void *arg){
+    worker_args_t *args = (worker_args_t *)arg;
+    node_t *node;
+    // Worker logic
+    // null se la coda è chiusa o non esiste
+    while ((node = dequeue(args->list)) != NULL) {
+        args->function(&(node->data), framework_emit_pair, &(args->mapper_to_reducer), args->user_arg);
+        free((void *)node->data.file_name);
+        free((void *)node->data.line);
+        free(node);
+    }
+
+    return 0;
+}
+
+
 int main_listener(mr_t_list* coda, int main_to_mapper){
     if (coda == NULL) {
+        mr_err("Coda non inizializzata. Non posso ascoltare sulla pipe.");
         return -1;
     }
 
     int status;
+    node_t* item = NULL;
     // legge continuamente dalla pipe e accoda gli elementi
-    while ((status = read_item_from_pipe(coda, main_to_mapper)) > 0) {
+    while ((status = read_item_from_pipe(coda, main_to_mapper, &item)) > 0) {
         // status == 1 indica elemento letto e accodato con successo
+        if(item != NULL){
+            queue(coda, item);
+            // item=NULL superfluo; teoricamente non è possibile un inserimento doppio del solito item, a patto che
+            // read_item_from_pipe ritorni >0 nonostante ci sia stato un errore..
+            // guardrail extra
+            item = NULL;
+        }
     }
 
     // chiude la coda per segnalare ai thread worker che l'input è finito
@@ -66,7 +197,7 @@ int main_listener(mr_t_list* coda, int main_to_mapper){
     return (status == 0) ? 0 : -1;
 }
 
-int read_item_from_pipe(mr_t_list* coda, int fd_pipe){
+int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item){
     int file_name_len;
 
     // leggiamo la lunghezza del nome del file 
@@ -142,16 +273,8 @@ int read_item_from_pipe(mr_t_list* coda, int fd_pipe){
         free(line);
         return -1;
     }
-
-    if (queue(coda, node) != 0) {
-        // se l'inserimento fallisce, liberiamo la memoria
-        free(node->file_name);
-        free(node->line);
-        free(node);
-        return -1;
-    }
-
-    return 0;
+    *item = node;
+    return 1;
 }
 
 mr_t_list* create_list(int queuesize){
@@ -185,6 +308,25 @@ mr_t_list* create_list(int queuesize){
     return list;
 }
 
+void destroy_list(mr_t_list *list) {
+    if (list == NULL) return;
+
+    node_t *curr = list->head;
+    while (curr != NULL) {
+        node_t *temp = curr;
+        curr = curr->next;
+        if (temp->data.file_name) free((void *)temp->data.file_name);
+        if (temp->data.line) free((void *)temp->data.line);
+        free(temp);
+    }
+
+    cnd_destroy(&list->full);
+    cnd_destroy(&list->empty);
+    mtx_destroy(&list->mutex);
+    free(list);
+}
+
+
 node_t* create_node(char* file_name, size_t file_name_len, size_t line_number, char* line, size_t line_length){
     if (file_name == NULL || file_name_len == 0 || line == NULL){
         mr_err("Errore durante la creazione di un nodo: parametri non validi.");
@@ -192,17 +334,15 @@ node_t* create_node(char* file_name, size_t file_name_len, size_t line_number, c
     }
 
     node_t* node = malloc(sizeof(node_t));
-    if (node == NULL) {
-        mr_err("Errore durante la creazione di un nodo: malloc fallita.");
-        return NULL;
-    }
-    node->file_name = file_name;
-    node->file_name_len = file_name_len;
-    node->line_number = line_number;
-    node->line = line;
-    node->line_length = line_length;
-    node->next = NULL;
+    if (node == NULL) return NULL;
 
+    node->data.file_name = file_name;
+    node->data.file_name_len = file_name_len;
+    node->data.line_number = line_number;
+    node->data.line = line;
+    node->data.line_len = line_length;
+
+    node->next = NULL;
     return node;
 }
 
