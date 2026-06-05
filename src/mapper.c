@@ -55,6 +55,10 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
         return -1;
     }
 
+    #if DEBUG
+    mr_debug("Lista creata..");
+    #endif
+
     // Alloca gli argomenti per il thread reader
     reader_args_t *args = malloc(sizeof(reader_args_t));
     if (args == NULL) {

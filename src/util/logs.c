@@ -34,6 +34,19 @@ void mr_err(const char* message){
     write_to_log(global_mr->config.log_file, process, message, 1);
 }
 
+#if DEBUG
+void mr_log_debug(const char* message){
+    if (global_mr == NULL) return; 
+    
+    char* process = "UNKNOWN";
+    if(getpid() == global_mr->mapper) process = "MAPPER";
+    else if(getpid() == global_mr->reducer) process = "REDUCER";
+    else if(getpid() == global_mr->main) process = "MAIN";
+
+    write_to_log(global_mr->config.log_file, process, message, 2);
+}
+#endif
+
 const char* get_log_file_attr(mr_attr_t attr){
     return attr.log_file;
 }
@@ -45,7 +58,7 @@ const char* get_log_file_mr(mr_t mapreducer){
 }
 
 
-void write_to_log(const char* log_filename, const char* process_name, const char* message, int is_error) {
+void write_to_log(const char* log_filename, const char* process_name, const char* message, int log_type) {
     if (log_filename == NULL || message == NULL || process_name == NULL) return;
 
     // Aggiungiamo "/logs/" al filepath
@@ -83,12 +96,16 @@ void write_to_log(const char* log_filename, const char* process_name, const char
 
     // Sequenze di escape ANSI per i colori sul terminale (e spesso supportati dai visualizzatori di file di log)
     const char* color_red = "\x1B[31m";
+    const char* color_yellow = "\x1B[33m";
     const char* color_reset = "\x1B[0m";
 
-    if (is_error) {
+    if (log_type == 1) { // ERROR
         fprintf(log_file, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
         fprintf(stderr, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
-    } else {
+    } else if (log_type == 2) { // DEBUG
+        fprintf(log_file, "%s[%s] [%s] DEBUG: %s%s\n", color_yellow, time_str, process_name, message, color_reset);
+        fprintf(stderr, "%s[%s] [%s] DEBUG: %s%s\n", color_yellow, time_str, process_name, message, color_reset);
+    } else { // INFO
         fprintf(log_file, "[%s] [%s] INFO: %s\n", time_str, process_name, message);
     }
     

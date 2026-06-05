@@ -35,8 +35,8 @@ typedef struct
     size_t reducer_threads;
     /*
      * Capacita ’ massima delle code interne usate per coordinare
-     * i thread C11 nei processi mapper e reducer .
-     * Non rappresenta la dimensione delle pipe .
+     * i thread C11 nei processi mapper e reducer.
+     * Non rappresenta la dimensione delle pipe.
      */
     size_t queue_size;
     const char *log_file;

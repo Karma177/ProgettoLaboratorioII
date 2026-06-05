@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mr.h>
+#include "../../include/mr.h"
 
 // Funzione Mapper utente 'dummy' fornita come esempio
 int dummy_mapper(const mr_file_line_t *line, mr_emit_pair_t emit, void *emit_arg, void *user_arg){
@@ -33,7 +33,7 @@ int main(int argc, char *argv[]) {
     mr_attr_t* attr;
     mr_t mr;
 
-    if(attr = mr_attr_setup(10, 10, 20, NULL) == -1){
+    if ((attr = mr_attr_setup(10, 10, 20, NULL)) == NULL){
         printf("Errore: mr_attr_setup fallito.\n");
         return EXIT_FAILURE;
     }
@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
     else
         printf("Processo MapReduce concluso con SUCCESSO.\n");
 
-    mr_attr_destroy(&attr);
+    mr_attr_destroy(attr);
     mr_destroy(mr);
     return EXIT_SUCCESS;
 }

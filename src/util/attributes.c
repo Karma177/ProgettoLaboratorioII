@@ -9,34 +9,38 @@
 
 
 // TODO: reindirizzare errno a logger, e dove vi è "return -1" o NULL scrivere la causa nei log. 
+
 // AGGIUNTA RISPETTO AL TESTO: per semplificare operazioni di debug
 // Utilizza i metodi che sarebbero stati utilizzati dall'utente che usa la nostra libreria, in un unica volta.
 // Gli altri metodi rimangono comunque a dispozione dell'utente in caso volesse cambiare qualcosa.
 // In caso vengano forniti parametri nulli utilizza come fallback quelli definiti in mr_attr_init.
 mr_attr_t* mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesize, char* logfile){
-    mr_attr_t attributes;
+    mr_attr_t* attributes = malloc(sizeof(mr_attr_t));
+    if (attributes == NULL) {
+        mr_err("mr_attr_setup: memoria insufficiente (malloc fallita).");
+        return NULL;
+    }
     
     // Inizializza con i valori di default
-    if (mr_attr_init(&attributes) == -1) {
+    if (mr_attr_init(attributes) == -1) {
         mr_err("mr_attr_setup: fallita l'inizializzazione degli attributi (mr_attr_init).");
-        // Ritorna una struttura vuota/azzerata in caso di errore
-        memset(&attributes, 0, sizeof(mr_attr_t));
-        return &attributes;
+        free(attributes);
+        return NULL;
     }
-    if(mapthreads!=NULL && mapthreads > 0 && mapthreads < 200)
-        mr_attr_set_mapper_threads(&attributes, mapthreads);
-    if(reducerthreads!=NULL && reducerthreads > 0 && reducerthreads < 200)
-        mr_attr_set_reducer_threads(&attributes, reducerthreads);
-    if(queuesize =! NULL && queuesize > 0 && queuesize < 200)
-        mr_attr_set_queue_size(&attributes, queuesize);
+    if(mapthreads > 0 && mapthreads < 200)
+        mr_attr_set_mapper_threads(attributes, mapthreads);
+    if(reducerthreads > 0 && reducerthreads < 200)
+        mr_attr_set_reducer_threads(attributes, reducerthreads);
+    if(queuesize > 0 && queuesize < 200)
+        mr_attr_set_queue_size(attributes, queuesize);
     
     if(logfile == NULL) {
         logfile = generate_log_header();
     }
-    mr_attr_set_log_file(&attributes, logfile);
+    mr_attr_set_log_file(attributes, logfile);
     // TODO: print attributes su logs (e su console)
     
-    return &attributes;
+    return attributes;
 }
 
 int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t reducer, void *user_arg){
@@ -57,6 +61,12 @@ int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t 
     temp->user_arg = user_arg;
     
     *mr = temp;
+    
+    #if DEBUG
+    set_log_mr(temp);
+    mr_debug("mr_create: Struttura MapReduce creata con successo.");
+    #endif
+
     return 0;
 }
 

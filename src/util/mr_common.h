@@ -19,10 +19,21 @@ int mr_set_main_pid(mr_t mr, pid_t pid);
 
 
 // Logs
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
+#define mr_debug(msg) mr_log_debug(msg)
+void mr_log_debug(const char* message);
+#else
+#define mr_debug(msg) do { } while (0)
+#endif
+
 char* generate_log_header();
 const char* get_log_file_attr(mr_attr_t attr);
 const char* get_log_file_mr(mr_t mapreducer);
-void write_to_log(const char* filepath, const char* process_name, const char* message, int is_error);
+void write_to_log(const char* filepath, const char* process_name, const char* message, int log_type);
 void mr_log(const char* message);
 void mr_err(const char* message);
 void set_log_mr(mr_t mr);

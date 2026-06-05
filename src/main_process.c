@@ -8,9 +8,8 @@
 #include <errno.h>
 #include <sys/wait.h>
 
-
-// Forward declarations per evitare implicit declarations ed errori C99
-int start_reducer(void);
+// TODO: Aggiungere [FATAL] se l'errore è fatale.
+int start_reducer(mr_t mr);
 int start_main_job(mr_t mr, const char *input_path, const char *output_path, int mapper_write_fd, int reducer_read_fd);
 int serialize_and_send(mr_t mr, const char* filepath, int write_fd, unsigned long *line_counter);
 int listen_to_reducer(int read_fd);
@@ -34,6 +33,10 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     set_log_mr(mr);
     mr_set_main_pid(mr, getpid());
 
+    #if DEBUG
+    mr_debug("mr_start: Avvio dell'esecuzione MapReduce nel main process.");
+    #endif
+
     // TODO: proper error handling
     int main_to_mapper[2];
     int mapper_to_reducer[2];
@@ -44,9 +47,14 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         return -1;
     }
 
+    #if DEBUG
+    mr_debug("mr_start: Pipe di comunicazione create con successo.");
+    #endif
+
     size_t mapper_pid = fork();
     if(mapper_pid == 0){
         // Logica mapper
+        mr_set_mapper_pid(mr, getpid());
         mr_log("Inizializzazione mapper");
 
         // Pipe
@@ -60,13 +68,22 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
             snprintf(err_msg, sizeof(err_msg), "Il processo mapper ha terminato con un errore. Errore: %d", ret);
             mr_err(err_msg);
         }
-        return ret;
+        exit(ret);
     }
     mr_set_mapper_pid(mr, mapper_pid);
+
+    #if DEBUG
+    {
+        char dbg_msg[128];
+        snprintf(dbg_msg, sizeof(dbg_msg), "mr_start: Processo mapper clonato con successo (PID: %d).", (int)mapper_pid);
+        mr_debug(dbg_msg);
+    }
+    #endif
 
     size_t reducer_pid = fork();
     if(reducer_pid == 0){
         // Logica reducer
+        mr_set_reducer_pid(mr, getpid());
         mr_log("Inizializzazione reducer");
 
         // Pipe
@@ -75,14 +92,22 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         mr_log("Pipe inizializzate.");
 
         int ret; 
-        if((ret = start_reducer()) != 0) {
+        if((ret = start_reducer(mr)) != 0) {
             char err_msg[128];
             snprintf(err_msg, sizeof(err_msg), "Il processo reducer ha terminato con un errore. Errore: %d", ret);
             mr_err(err_msg);
         }
-        return ret;
+        exit(ret);
     }
     mr_set_reducer_pid(mr, reducer_pid);
+
+    #if DEBUG
+    {
+        char dbg_msg[128];
+        snprintf(dbg_msg, sizeof(dbg_msg), "mr_start: Processo reducer clonato con successo (PID: %d).", (int)reducer_pid);
+        mr_debug(dbg_msg);
+    }
+    #endif
 
     // Logica Main Process
     mr_log("Inizializzazione main process...");
