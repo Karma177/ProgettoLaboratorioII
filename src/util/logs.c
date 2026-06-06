@@ -94,17 +94,13 @@ void write_to_log(const char* log_filename, const char* process_name, const char
     char time_str[20];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
 
-    // Sequenze di escape ANSI per i colori sul terminale (e spesso supportati dai visualizzatori di file di log)
-    const char* color_red = "\x1B[31m";
-    const char* color_yellow = "\x1B[33m";
-    const char* color_reset = "\x1B[0m";
 
     if (log_type == 1) { // ERROR
-        fprintf(log_file, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
-        fprintf(stderr, "%s[%s] [%s] ERROR: %s%s\n", color_red, time_str, process_name, message, color_reset);
+        fprintf(log_file, "[%s] [%s] ERROR: %s\n", time_str, process_name, message);
+        fprintf(stderr, "[%s] [%s] ERROR: %s\n", time_str, process_name, message);
     } else if (log_type == 2) { // DEBUG
-        fprintf(log_file, "%s[%s] [%s] DEBUG: %s%s\n", color_yellow, time_str, process_name, message, color_reset);
-        fprintf(stderr, "%s[%s] [%s] DEBUG: %s%s\n", color_yellow, time_str, process_name, message, color_reset);
+        fprintf(log_file, "[%s] [%s] DEBUG: %s\n", time_str, process_name, message);
+        fprintf(stderr, "[%s] [%s] DEBUG: %s\n", time_str, process_name, message);
     } else { // INFO
         fprintf(log_file, "[%s] [%s] INFO: %s\n", time_str, process_name, message);
     }

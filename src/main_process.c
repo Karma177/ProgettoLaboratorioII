@@ -51,6 +51,10 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     mr_debug("mr_start: Pipe di comunicazione create con successo.");
     #endif
 
+    /*
+        MAPPER:
+        sezione di codice dedicata al mapper.
+    */
     size_t mapper_pid = fork();
     if(mapper_pid == 0){
         // Logica mapper
@@ -61,6 +65,9 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         dup2(main_to_mapper[0], STDIN_FILENO);
         dup2(mapper_to_reducer[1], STDOUT_FILENO);
         mr_log("Pipe inizializzate.");
+
+        close(main_to_mapper[0]);
+        close(mapper_to_reducer[1]);
 
         int ret; 
         if((ret = start_mapper(mr, STDIN_FILENO, STDOUT_FILENO)) != 0) {
@@ -80,6 +87,10 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     }
     #endif
 
+    /*
+        REDUCER:
+        sezione di codice dedicata al reducer.
+    */
     size_t reducer_pid = fork();
     if(reducer_pid == 0){
         // Logica reducer
@@ -90,6 +101,10 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         dup2(mapper_to_reducer[0], STDIN_FILENO);
         dup2(reducer_to_main[1], STDOUT_FILENO);
         mr_log("Pipe inizializzate.");
+
+        // Chiudiamo i descrittori originali duplicati
+        close(mapper_to_reducer[0]);
+        close(reducer_to_main[1]);
 
         int ret; 
         if((ret = start_reducer(mr)) != 0) {
@@ -109,8 +124,16 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     }
     #endif
 
-    // Logica Main Process
+    /*
+        MAIN PROCESS:
+        sezione di codice dedicata al processo principale.
+    */
     mr_log("Inizializzazione main process...");
+
+    close(main_to_mapper[0]);
+    close(mapper_to_reducer[0]);
+    close(mapper_to_reducer[1]);
+    close(reducer_to_main[1]);
 
     // Pipe
     dup2(reducer_to_main[0], STDIN_FILENO);

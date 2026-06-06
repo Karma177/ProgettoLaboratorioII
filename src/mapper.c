@@ -119,6 +119,7 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
     // attesa thread worker creati
     for (int j = 0; j < workers_created; j++) thrd_join(workers[j], NULL);
     if (workers) free(workers);
+    close(mapper_to_reducer);
     destroy_list(list);
 
     return success;
