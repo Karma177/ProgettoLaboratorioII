@@ -4,6 +4,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include "mr_common.h"
 
 
@@ -59,6 +61,22 @@ int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t 
     temp->mapper_f = mapper;
     temp->reducer_f = reducer;
     temp->user_arg = user_arg;
+
+    // Crea il semaforo POSIX senza nome in memoria condivisa anonima
+    sem_t *sem = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (sem == MAP_FAILED) {
+        mr_err("mr_create: fallita l'allocazione della memoria condivisa per il semaforo.");
+        free(temp);
+        return -1;
+    }
+    // Inizializza il semaforo per essere condiviso tra processi (secondo parametro = 1)
+    if (sem_init(sem, 1, 1) == -1) {
+        mr_err("mr_create: fallita l'inizializzazione del semaforo.");
+        munmap(sem, sizeof(sem_t));
+        free(temp);
+        return -1;
+    }
+    temp->log_sem = sem;
     
     *mr = temp;
     
@@ -181,6 +199,11 @@ int mr_set_main_pid(mr_t mr, pid_t pid){
 int mr_destroy(mr_t mr){
     if (mr == NULL) {
         return -1;
+    }
+
+    if (mr->log_sem != NULL) {
+        sem_destroy(mr->log_sem);
+        munmap(mr->log_sem, sizeof(sem_t));
     }
 
     // Libera il file di log se è stato allocato dinamicamente

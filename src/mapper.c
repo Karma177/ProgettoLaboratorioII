@@ -30,7 +30,6 @@ typedef struct {
 typedef struct {
     mr_t_list *list;
     mr_mapper_t function;
-    int mapper_to_reducer; // lato di scrittura 
     void *user_arg;        
 } worker_args_t;
 
@@ -47,11 +46,19 @@ int framework_emit_pair(const char *token, const void *value, size_t value_size,
 
 
 
+static mtx_t mapper_write_mutex;
+
 // Entry point per le funzioni del mapper
-int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
+int start_mapper(mr_t mr){
     mr_t_list* list = create_list(mr->config.queue_size);
     if (list == NULL) {
         mr_err("Impossibile creare la coda del mapper.");
+        return -1;
+    }
+
+    if (mtx_init(&mapper_write_mutex, mtx_plain) != thrd_success) {
+        mr_err("Impossibile creare il mutex di scrittura del mapper.");
+        destroy_list(list);
         return -1;
     }
 
@@ -67,7 +74,7 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
         return -1;
     }
     args->coda = list;
-    args->main_to_mapper = main_to_mapper;
+    args->main_to_mapper = STDIN_FILENO;
 
     thrd_t reader_thread;
     if (thrd_create(&reader_thread, reader_thread_func, args) != thrd_success) {
@@ -88,7 +95,6 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
         worker_args_t w_args;
         w_args.list = list;
         w_args.function = mr->mapper_f;
-        w_args.mapper_to_reducer = mapper_to_reducer;
         w_args.user_arg = mr->user_arg;
 
         while (workers_created < mr->config.mapper_threads) {
@@ -109,7 +115,7 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
         cnd_broadcast(&list->full);
         mtx_unlock(&list->mutex);
 
-        close(main_to_mapper);
+        close(STDIN_FILENO);
     }
 
     // pulizia memoria a termine del processo
@@ -119,14 +125,16 @@ int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer){
     // attesa thread worker creati
     for (int j = 0; j < workers_created; j++) thrd_join(workers[j], NULL);
     if (workers) free(workers);
-    close(mapper_to_reducer);
+    close(STDOUT_FILENO);
     destroy_list(list);
+    mtx_destroy(&mapper_write_mutex);
 
     return success;
 }
 
 int framework_emit_pair(const char *token, const void *value, size_t value_size, void *emit_arg) {
-    int fd_pipe = *(int *)emit_arg;
+    (void)emit_arg;
+    int fd_pipe = STDOUT_FILENO;
 
     int token_len = strlen(token);
     int value_len = value_size;
@@ -136,13 +144,27 @@ int framework_emit_pair(const char *token, const void *value, size_t value_size,
         return -1;
     }
 
+    mtx_lock(&mapper_write_mutex);
     // Spediamo nell'ordine del protocollo: len_token, token, len_value, value
-    if (writen(fd_pipe, &token_len, sizeof(int)) < 0) return -1;
-    if (writen(fd_pipe, token, token_len) < 0) return -1;
-    if (writen(fd_pipe, &value_len, sizeof(int)) < 0) return -1;
-    if (value_len > 0 && value != NULL) {
-        if (writen(fd_pipe, value, value_len) < 0) return -1;
+    if (writen(fd_pipe, &token_len, sizeof(int)) < 0) {
+        mtx_unlock(&mapper_write_mutex);
+        return -1;
     }
+    if (writen(fd_pipe, token, token_len) < 0) {
+        mtx_unlock(&mapper_write_mutex);
+        return -1;
+    }
+    if (writen(fd_pipe, &value_len, sizeof(int)) < 0) {
+        mtx_unlock(&mapper_write_mutex);
+        return -1;
+    }
+    if (value_len > 0 && value != NULL) {
+        if (writen(fd_pipe, value, value_len) < 0) {
+            mtx_unlock(&mapper_write_mutex);
+            return -1;
+        }
+    }
+    mtx_unlock(&mapper_write_mutex);
 
     return 0;
 }
@@ -162,7 +184,7 @@ int worker_thread_func(void *arg){
     // Worker logic
     // null se la coda è chiusa o non esiste
     while ((node = dequeue(args->list)) != NULL) {
-        args->function(&(node->data), framework_emit_pair, &(args->mapper_to_reducer), args->user_arg);
+        args->function(&(node->data), framework_emit_pair, NULL, args->user_arg);
         free((void *)node->data.file_name);
         free((void *)node->data.line);
         free(node);
@@ -203,11 +225,11 @@ int main_listener(mr_t_list* coda, int main_to_mapper){
 }
 
 int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item){
-    int file_name_len;
+    size_t file_name_len;
 
     // leggiamo la lunghezza del nome del file 
     // readn restituisce 0 == EOF 
-    ssize_t res = readn(fd_pipe, &file_name_len, sizeof(int));
+    ssize_t res = readn(fd_pipe, &file_name_len, sizeof(size_t));
     if (res == 0)
         return 0; // EOF regolare
 

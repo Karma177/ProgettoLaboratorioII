@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
@@ -70,23 +69,20 @@ void write_to_log(const char* log_filename, const char* process_name, const char
     strcpy(full_path, prefix);
     strcat(full_path, log_filename);
 
+    // Acquisisce il semaforo POSIX per la sincronizzazione (processi e thread)
+    if (global_mr != NULL && global_mr->log_sem != NULL) {
+        sem_wait(global_mr->log_sem);
+    }
+
     // Apre il file in modalità append
     FILE *log_file = fopen(full_path, "a");
     if (log_file == NULL) {
+        if (global_mr != NULL && global_mr->log_sem != NULL) {
+            sem_post(global_mr->log_sem);
+        }
         free(full_path);
         return;
     }
-
-    // Setup della struttura per il File Lock
-    struct flock fl;
-    memset(&fl, 0, sizeof(fl));
-    fl.l_type   = F_WRLCK;  // Write lock (blocca altri scrittori)
-    fl.l_whence = SEEK_SET; // Blocca dall'inizio (byte 0) del file
-    fl.l_start  = 0;
-    fl.l_len    = 0;        // 0 significa bloccare l'intero file
-
-    // Richiede il lock in modo bloccante (attende se un altro processo sta scrivendo)
-    fcntl(fileno(log_file), F_SETLKW, &fl);
 
     // Otteniamo il tempo corrente
     time_t now = time(NULL);
@@ -107,13 +103,14 @@ void write_to_log(const char* log_filename, const char* process_name, const char
     
     fflush(log_file); // Forza la scrittura fisica su disco 
 
-    // Rilascia il lock
-    fl.l_type = F_UNLCK;
-    fcntl(fileno(log_file), F_SETLK, &fl);
-
-    // Chiude il descrittore
+    // Chiude il descrittore e libera il path
     fclose(log_file);
     free(full_path);
+
+    // Rilascia il semaforo POSIX
+    if (global_mr != NULL && global_mr->log_sem != NULL) {
+        sem_post(global_mr->log_sem);
+    }
 }
 
 char* generate_log_header(){

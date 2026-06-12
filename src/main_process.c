@@ -70,7 +70,7 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
         close(mapper_to_reducer[1]);
 
         int ret; 
-        if((ret = start_mapper(mr, STDIN_FILENO, STDOUT_FILENO)) != 0) {
+        if((ret = start_mapper(mr)) != 0) {
             char err_msg[128];
             snprintf(err_msg, sizeof(err_msg), "Il processo mapper ha terminato con un errore. Errore: %d", ret);
             mr_err(err_msg);
@@ -250,7 +250,7 @@ int serialize_and_send(mr_t mr, const char* filepath, int write_fd, unsigned lon
     char* line = NULL;
     size_t len = 0;
     ssize_t read_bytes;
-    int file_name_len = strlen(filepath);
+    size_t file_name_len = strlen(filepath);
 
     // Leggiamo il file riga per riga
     while ((read_bytes = getline(&line, &len, file)) != -1) {

@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <threads.h>
+#include <stdatomic.h>
+#include <unistd.h>
+
 
 // Numero primo relativamente grande per ottimizzare l'inserimento
 // e rendere la ht abbastanza uniforme
@@ -46,59 +49,106 @@ typedef struct {
 } reader_args_t;
 
 typedef struct {
-    ht* table;
+    ht_item** sorted_items;
+    size_t item_count;
     mr_reducer_t function;
-    
+    atomic_size_t last_checked_item;
     void *user_arg;        
 } worker_args_t;
 
-ht* ht_create();
+ht_item** get_sorted_items(ht* table);
 ht_item* get_token_reference(ht* table, size_t index, const char* token);
 size_t fallback_hash(const char* token, size_t token_len, void* user_arg);
+ht* ht_create();
 unsigned long get_hash(mr_hash_t func, void* hash_arg, const char* token, size_t token_len);
 int add_in_chain(ht* table, ht_item* token_position, token_chain* node);
 int destroy_chain(ht_item* entry);
 int listen_to_mapper(int fd, ht* table, mr_t mr);
 int ht_insert(ht* table, unsigned long hash, const char* token, size_t token_len, void* value, size_t value_size);
-int worker_thread_func();
+int ht_destroy(ht* table);
+int worker_thread_func(void* arg);
 int compare_ht_items(const void* a, const void* b);
-ht_item** get_sorted_items(ht* table);
+int framework_emit_result(const char *token, const void *result, size_t result_size, void *emit_arg);
 
 // Entry point per le funzioni del reducer
-int start_reducer(mr_t mr, int mapper_to_reducer, int reducer_to_main) {
+int start_reducer(mr_t mr) {
     mr_log("Processo reducer avviato");
     ht* hash_table = ht_create();
     if(mr->config.hash == NULL)
         mr_attr_set_hash_function(&mr->config, fallback_hash, NULL);
-    listen_to_mapper(mapper_to_reducer, hash_table, mr);
+    listen_to_mapper(STDIN_FILENO, hash_table, mr);
 
     // salva tutti gli item della lista in un array e ordinali in modo lessicografico
     ht_item** sorted_items = get_sorted_items(hash_table);
 
-    thrd_t *workers = malloc(sizeof(thrd_t) * mr->config.mapper_threads);
+    thrd_t *workers = malloc(sizeof(thrd_t) * mr->config.reducer_threads);
     int workers_created = 0;
 
     if (workers == NULL) {
         mr_err("Impossibile allocare l'array dei thread worker.");
     } else {
         worker_args_t w_args;
-        w_args.table = hash_table;
+        w_args.sorted_items = sorted_items;
         w_args.function = mr->reducer_f;
         w_args.user_arg = mr->user_arg;
+        atomic_init(&w_args.last_checked_item, 0);
+        w_args.item_count = hash_table->counter;
 
-        while (workers_created < mr->config.mapper_threads) {
+        while (workers_created < mr->config.reducer_threads) {
             if (thrd_create(&workers[workers_created], worker_thread_func, &w_args) != thrd_success) {
                 mr_err("Impossibile creare il thread worker.");
                 break;
             }
             workers_created++;
         }
+
+        // Aspetta che tutti i thread worker finiscano per evitare che w_args scada dallo stack
+        for (int i = 0; i < workers_created; i++) {
+            thrd_join(workers[i], NULL);
+        }
+        free(workers);
     }
+
+    if (sorted_items) {
+        free(sorted_items);
+    }
+
+    ht_destroy(hash_table);
+
     return 0;
 }
 
-int worker_thread_func(){
-    //todo
+int worker_thread_func(void* arg){
+    worker_args_t *args = (worker_args_t *)arg;
+    // Worker logic
+    size_t i;
+    while ((i = atomic_fetch_add(&args->last_checked_item, 1)) < args->item_count) {
+        // trasformazione a mr_value_t* per la funzione dell'utente
+        ht_item* item = args->sorted_items[i];
+        mr_value_t* values = malloc(sizeof(mr_value_t) * item->counter);
+        if (values == NULL){
+            mr_err("Impossibile allocare lo spazio per ritornare il messaggio in un thread worker.");
+            return -1;
+        }
+
+        token_chain* curr_val = item->value;
+        for (size_t id = 0; id < item->counter && curr_val != NULL; id++) {
+            values[id].data = curr_val->value;
+            values[id].size = curr_val->size;
+            curr_val = curr_val->next;
+        }
+
+        args->function(item->key, values, item->counter, framework_emit_result, NULL, args->user_arg);
+        free(values);
+    }
+
+    return 0;
+}
+
+int framework_emit_result(const char *token, const void *result, size_t result_size, void *emit_arg){
+    (void)emit_arg;
+    // todo
+
     return 0;
 }
 
@@ -234,6 +284,7 @@ int ht_insert(ht* table, unsigned long hash, const char* token, size_t token_len
         token_position = malloc(sizeof(ht_item));
         if(token_position == NULL){
             mr_err("Impossibile allocare spazio per inserire un item nella table.");
+            free((void*)token); 
             return -1;
         }
         token_position->next = NULL;
@@ -246,6 +297,8 @@ int ht_insert(ht* table, unsigned long hash, const char* token, size_t token_len
         token_position->next = table->entries[index].next;
         table->entries[index].next = token_position;
         table->counter++;
+    } else {
+        free((void*)token);
     }
 
     token_chain* node = malloc(sizeof(token_chain));

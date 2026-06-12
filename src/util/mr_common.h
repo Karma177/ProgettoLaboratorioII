@@ -1,5 +1,6 @@
 #include "../../include/mr.h"
 #include <sys/types.h>
+#include <semaphore.h>
 
 // MapReduce utils
 #define LIMITE_RAGIONEVOLE (4 * 1024 * 1024)
@@ -11,6 +12,7 @@ struct mr {
     pid_t mapper;
     pid_t reducer;
     pid_t main;
+    sem_t *log_sem;       // Semaforo per la sincronizzazione dei log
 };
 mr_attr_t* mr_attr_setup(size_t mapthreads, size_t reducerthreads, size_t queuesize, char* logfile);
 int mr_set_mapper_pid(mr_t mr, pid_t pid);
@@ -39,7 +41,7 @@ void mr_err(const char* message);
 void set_log_mr(mr_t mr);
 
 // Mapper
-int start_mapper(mr_t mr, int main_to_mapper, int mapper_to_reducer);
+int start_mapper(mr_t mr);
 
 // Lettura/Scrittura esatta su file descriptor
 ssize_t readn(int fd, void *buf, size_t n);
