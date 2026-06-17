@@ -26,15 +26,19 @@ typedef struct tk_c{
     struct tk_c* next;
 } token_chain;
 
+typedef struct res_c {
+    mr_value_t value;    // Contiene .data (puntatore alla copia sull'heap) e .size (dimensione)
+    struct res_c* next;
+} result_chain;
+
 // L'item della hash contiene il puntatore al prossimo token che ha fatto collisione con lei.
 // Per ogni token teniamo un altra chain (void* value) con tutti i valori legati a quel token.
 typedef struct ht_i {
     const char* key;
     struct tk_c* value;
     struct ht_i* next;
-    mr_value_t final_result;
+    result_chain* results;
     size_t counter;
-    
 } ht_item;
 
 typedef struct {
@@ -69,6 +73,7 @@ int ht_destroy(ht* table);
 int worker_thread_func(void* arg);
 int compare_ht_items(const void* a, const void* b);
 int framework_emit_result(const char *token, const void *result, size_t result_size, void *emit_arg);
+int send_sorted_to_main(ht_item** sorted_items);
 
 // Entry point per le funzioni del reducer
 int start_reducer(mr_t mr) {
@@ -109,6 +114,11 @@ int start_reducer(mr_t mr) {
         free(workers);
     }
 
+    if (send_sorted_results(STDOUT_FILENO, sorted_items, hash_table->counter) < 0)
+    {
+        mr_err("Impossibile inviare i risultati al processo principale.");
+    }
+
     if (sorted_items) {
         free(sorted_items);
     }
@@ -138,7 +148,7 @@ int worker_thread_func(void* arg){
             curr_val = curr_val->next;
         }
 
-        args->function(item->key, values, item->counter, framework_emit_result, NULL, args->user_arg);
+        args->function(item->key, values, item->counter, framework_emit_result, item, args->user_arg);
         free(values);
     }
 
@@ -146,30 +156,64 @@ int worker_thread_func(void* arg){
 }
 
 int framework_emit_result(const char *token, const void *result, size_t result_size, void *emit_arg){
-    (void)emit_arg;
-    // todo
+    ht_item *item = (ht_item *)emit_arg;
+    if (item == NULL)
+        return -1;
+
+    result_chain *new_res = malloc(sizeof(result_chain));
+    if (new_res == NULL){
+        mr_err("Impossibile allocare memoria per il nodo del risultato.");        
+        return -1;
+    }
+
+    new_res->value.size = result_size;
+    new_res->value.data = NULL;
+    new_res->next = NULL;
+
+    if (result_size > 0 && result != NULL){
+        void *copied_data = malloc(result_size);
+        if (copied_data == NULL){
+            free(new_res);
+            mr_err("Impossibile allocare memoria per i dati del risultato.");         
+            return -1;
+        }
+        memcpy(copied_data, result, result_size);
+        new_res->value.data = copied_data;
+    }
+
+    if(item->results != NULL){
+        new_res->next = item->results;
+        item->results = new_res;
+    }else
+        item->results = new_res;
 
     return 0;
 }
 
-int listen_to_mapper(int fd, ht* table, mr_t mr){
+int listen_to_mapper(int fd, ht *table, mr_t mr)
+{
     int token_len;
-    char* token;
+    char *token;
     int value_len;
-    void* value = NULL;
-    while(readn(fd, &token_len, sizeof(int))>0){
-        token = malloc(sizeof(char)*token_len+1);
-        if(readn(fd, token, token_len)<0) return -1;
+    void *value = NULL;
+    while (readn(fd, &token_len, sizeof(int)) > 0)
+    {
+        token = malloc(sizeof(char) * token_len + 1);
+        if (readn(fd, token, token_len) < 0)
+            return -1;
         token[token_len] = '\0';
-        
-        if(readn(fd, &value_len, sizeof(int)) < 0) return -1;
-        
-        if(value_len > 0){
+
+        if (readn(fd, &value_len, sizeof(int)) < 0)
+            return -1;
+
+        if (value_len > 0)
+        {
             value = malloc(value_len);
-            if(readn(fd, value, value_len) < 0) return -1;
+            if (readn(fd, value, value_len) < 0)
+                return -1;
         }
 
-        if(ht_insert(table, get_hash(mr->config.hash, mr->config.hash_arg, token, token_len), token, token_len, value, value_len) == -1)
+        if (ht_insert(table, get_hash(mr->config.hash, mr->config.hash_arg, token, token_len), token, token_len, value, value_len) == -1)
             return -1;
 
         token_len = 0;
@@ -178,6 +222,65 @@ int listen_to_mapper(int fd, ht* table, mr_t mr){
         value = NULL;
     }
 
+    return 0;
+}
+
+int send_sorted_to_main(ht_item** sorted_items, size_t item_count){
+    if (sorted_items == NULL)
+    {
+        return 0;
+    }
+
+    for (size_t i = 0; i < item_count; i++)
+    {
+        ht_item *item = sorted_items[i];
+        if (item == NULL)
+        {
+            continue;
+        }
+
+        // Scorriamo tutti i risultati emessi per questo specifico token
+        result_chain *curr_res = item->results;
+        while (curr_res != NULL)
+        {
+            int token_len = strlen(item->key);
+            int result_len = curr_res->value.size;
+            // fd è stdout, da sistemare
+            // TODO Fix
+            // 1. Inviamo la lunghezza del token (int)
+            if (writen(fd, &token_len, sizeof(int)) < 0)
+            {
+                mr_err("Errore di scrittura lunghezza token sulla pipe.");
+                return -1;
+            }
+
+            // 2. Inviamo il token effettivo
+            if (writen(fd, item->key, token_len) < 0)
+            {
+                mr_err("Errore di scrittura token sulla pipe.");
+                return -1;
+            }
+
+            // 3. Inviamo la lunghezza del risultato (int)
+            if (writen(fd, &result_len, sizeof(int)) < 0)
+            {
+                mr_err("Errore di scrittura lunghezza risultato sulla pipe.");
+                return -1;
+            }
+
+            // 4. Inviamo i byte del risultato (se presenti)
+            if (result_len > 0 && curr_res->value.data != NULL)
+            {
+                if (writen(fd, curr_res->value.data, result_len) < 0)
+                {
+                    mr_err("Errore di scrittura dati risultato sulla pipe.");
+                    return -1;
+                }
+            }
+
+            curr_res = curr_res->next;
+        }
+    }
     return 0;
 }
 
@@ -291,8 +394,7 @@ int ht_insert(ht* table, unsigned long hash, const char* token, size_t token_len
         token_position->key = token;
         token_position->value = NULL;
         token_position->counter = 0;
-        token_position->final_result.data = NULL;
-        token_position->final_result.size = 0;
+        token_position->results = NULL;
         
         token_position->next = table->entries[index].next;
         table->entries[index].next = token_position;
