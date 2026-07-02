@@ -35,9 +35,11 @@ void mr_log_debug(const char* message);
 char* generate_log_header();
 const char* get_log_file_attr(mr_attr_t attr);
 const char* get_log_file_mr(mr_t mapreducer);
-void write_to_log(const char* filepath, const char* process_name, const char* message, int log_type);
+void write_to_log(const char* filepath, const char* process_name, const char* event_name, const char* message, int log_type);
 void mr_log(const char* message);
 void mr_err(const char* message);
+void mr_log_event(const char* event_name, const char* message);
+void mr_err_event(const char* event_name, const char* message);
 void set_log_mr(mr_t mr);
 
 // Mapper

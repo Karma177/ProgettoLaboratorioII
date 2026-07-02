@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdio.h>
 
 typedef struct Nodo {
     mr_file_line_t data;
@@ -25,12 +26,14 @@ typedef struct {
 typedef struct {
     mr_t_list *coda;
     int main_to_mapper;
+    mr_t mr;
 } reader_args_t;
 
 typedef struct {
     mr_t_list *list;
     mr_mapper_t function;
     void *user_arg;        
+    mr_t mr;
 } worker_args_t;
 
 mr_t_list* create_list(int queuesize);
@@ -41,15 +44,18 @@ int queue(mr_t_list *list, node_t *node);
 int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item);
 int main_listener(mr_t_list* coda, int main_to_mapper);
 int reader_thread_func(void *arg);
-int worker_thread_func(void *arg);
+int mapper_worker_thread_func(void *arg);
 int framework_emit_pair(const char *token, const void *value, size_t value_size, void *emit_arg);
 
 
 
 static mtx_t mapper_write_mutex;
+static size_t mapper_emitted_pairs = 0;
 
 // Entry point per le funzioni del mapper
 int start_mapper(mr_t mr){
+    char log_msg[128];
+    mapper_emitted_pairs = 0;
     mr_t_list* list = create_list(mr->config.queue_size);
     if (list == NULL) {
         mr_err("Impossibile creare la coda del mapper.");
@@ -75,6 +81,7 @@ int start_mapper(mr_t mr){
     }
     args->coda = list;
     args->main_to_mapper = STDIN_FILENO;
+    args->mr = mr;
 
     thrd_t reader_thread;
     if (thrd_create(&reader_thread, reader_thread_func, args) != thrd_success) {
@@ -85,7 +92,7 @@ int start_mapper(mr_t mr){
     }
 
     thrd_t *workers = malloc(sizeof(thrd_t) * mr->config.mapper_threads);
-    int workers_created = 0;
+    size_t workers_created = 0;
     int success = 0;
 
     if (workers == NULL) {
@@ -96,9 +103,10 @@ int start_mapper(mr_t mr){
         w_args.list = list;
         w_args.function = mr->mapper_f;
         w_args.user_arg = mr->user_arg;
+        w_args.mr = mr;
 
         while (workers_created < mr->config.mapper_threads) {
-            if (thrd_create(&workers[workers_created], worker_thread_func, &w_args) != thrd_success) {
+            if (thrd_create(&workers[workers_created], mapper_worker_thread_func, &w_args) != thrd_success) {
                 mr_err("Impossibile creare il thread worker.");
                 success = -1;
                 break;
@@ -123,11 +131,14 @@ int start_mapper(mr_t mr){
     thrd_join(reader_thread, NULL);
 
     // attesa thread worker creati
-    for (int j = 0; j < workers_created; j++) thrd_join(workers[j], NULL);
+    for (size_t j = 0; j < workers_created; j++) thrd_join(workers[j], NULL);
     if (workers) free(workers);
     close(STDOUT_FILENO);
     destroy_list(list);
     mtx_destroy(&mapper_write_mutex);
+
+    snprintf(log_msg, sizeof(log_msg), "Prodotte %zu coppie dal mapper", mapper_emitted_pairs);
+    mr_log_event("METRIC_PAIRS", log_msg);
 
     return success;
 }
@@ -145,6 +156,7 @@ int framework_emit_pair(const char *token, const void *value, size_t value_size,
     }
 
     mtx_lock(&mapper_write_mutex);
+    mapper_emitted_pairs++;
     // Spediamo nell'ordine del protocollo: len_token, token, len_value, value
     if (writen(fd_pipe, &token_len, sizeof(int)) < 0) {
         mtx_unlock(&mapper_write_mutex);
@@ -171,16 +183,21 @@ int framework_emit_pair(const char *token, const void *value, size_t value_size,
 
 int reader_thread_func(void *arg) {
     reader_args_t *args = (reader_args_t *)arg;
+    set_log_mr(args->mr);
+    mr_log_event("THREAD_START", "Avviato thread reader");
     
     int status = main_listener(args->coda, args->main_to_mapper);
     
+    mr_log_event("THREAD_END", "Terminato thread reader");
     free(args); 
     return status;
 }
 
-int worker_thread_func(void *arg){
+int mapper_worker_thread_func(void *arg){
     worker_args_t *args = (worker_args_t *)arg;
+    set_log_mr(args->mr);
     node_t *node;
+    mr_log_event("THREAD_START", "Avviato thread mapper worker");
     // Worker logic
     // null se la coda è chiusa o non esiste
     while ((node = dequeue(args->list)) != NULL) {
@@ -190,6 +207,7 @@ int worker_thread_func(void *arg){
         free(node);
     }
 
+    mr_log_event("THREAD_END", "Terminato thread mapper worker");
     return 0;
 }
 
@@ -225,6 +243,7 @@ int main_listener(mr_t_list* coda, int main_to_mapper){
 }
 
 int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item){
+    (void)coda;
     size_t file_name_len;
 
     // leggiamo la lunghezza del nome del file 
@@ -248,7 +267,7 @@ int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item){
         return -1;
     }
 
-    if (readn(fd_pipe, file_name, file_name_len) != file_name_len) {
+    if (readn(fd_pipe, file_name, file_name_len) != (ssize_t)file_name_len) {
         free(file_name);
         errno = EPIPE;
         return -1;

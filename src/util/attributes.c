@@ -58,6 +58,9 @@ int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t 
     }
     
     temp->config = *attr;
+    if (attr->log_file != NULL) {
+        temp->config.log_file = strdup(attr->log_file);
+    }
     temp->mapper_f = mapper;
     temp->reducer_f = reducer;
     temp->user_arg = user_arg;
@@ -113,7 +116,6 @@ int mr_attr_destroy(mr_attr_t *attr) {
     if (attr->log_file != NULL)
         free((void *)attr->log_file); 
     
-    free(attr);
     return 0;
 }
 
@@ -153,7 +155,7 @@ int mr_attr_set_log_file(mr_attr_t *attr, const char *path) {
     if (attr->log_file != NULL)
         free((void *)attr->log_file);
     
-    attr->log_file = path;
+    attr->log_file = path ? strdup(path) : NULL;
     return 0;
 }
 
