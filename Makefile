@@ -1,88 +1,85 @@
-# Makefile for ProgettoLaboratorioII
-
 CC = gcc
 CFLAGS = -Wall -Wextra -pthread -Iinclude -g
 LDFLAGS = -pthread
-
-# Directory di destinazione per i file compilati (nella stessa cartella di word_count.c)
+LIB_DIR = src/dist
+LIB = $(LIB_DIR)/libmr.a
 DIST_DIR = examples/example1/dist
 DIST_DIR2 = examples/example2/dist
+DIST_DIR3 = examples/example3/dist
+INPUT_TEST ?= examples/input_test
 
-# Definizione dei file oggetto all'interno di dist/
-OBJS = $(DIST_DIR)/main_process.o \
-       $(DIST_DIR)/mapper.o \
-       $(DIST_DIR)/reducer.o \
-       $(DIST_DIR)/attributes.o \
-       $(DIST_DIR)/logs.o
-
-OBJS2 = $(DIST_DIR2)/main_process.o \
-        $(DIST_DIR2)/mapper.o \
-        $(DIST_DIR2)/reducer.o \
-        $(DIST_DIR2)/attributes.o \
-        $(DIST_DIR2)/logs.o
-
-LIB = $(DIST_DIR)/libmr.a
-LIB2 = $(DIST_DIR2)/libmr.a
-
+LIB_OBJS = $(LIB_DIR)/main_process.o \
+           $(LIB_DIR)/mapper.o \
+           $(LIB_DIR)/reducer.o \
+           $(LIB_DIR)/attributes.o \
+           $(LIB_DIR)/logs.o
 EXAMPLE1 = $(DIST_DIR)/word_count
 EXAMPLE2 = $(DIST_DIR2)/word_count_multi
-
-all: $(LIB) $(EXAMPLE1) $(LIB2) $(EXAMPLE2)
-
-$(LIB): $(OBJS)
+EXAMPLE3 = $(DIST_DIR3)/edge_cases
+PRINT_OUT = $(LIB_DIR)/print_output
+all: $(LIB) $(EXAMPLE1) $(EXAMPLE2) $(EXAMPLE3) $(PRINT_OUT)
+$(LIB): $(LIB_OBJS)
 	ar rcs $@ $^
 
-$(LIB2): $(OBJS2)
-	ar rcs $@ $^
-
-# Regole di compilazione per i file sorgente in src/ (Example 1)
-$(DIST_DIR)/%.o: src/%.c
-	@mkdir -p $(DIST_DIR)
+$(LIB_DIR)/%.o: src/%.c
+	@mkdir -p $(LIB_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-# Regole di compilazione per i file sorgente in src/util/ (Example 1)
-$(DIST_DIR)/%.o: src/util/%.c
-	@mkdir -p $(DIST_DIR)
+	
+$(LIB_DIR)/%.o: src/util/%.c
+	@mkdir -p $(LIB_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-# Regole di compilazione per i file sorgente in src/ (Example 2)
-$(DIST_DIR2)/%.o: src/%.c
-	@mkdir -p $(DIST_DIR2)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Regole di compilazione per i file sorgente in src/util/ (Example 2)
-$(DIST_DIR2)/%.o: src/util/%.c
-	@mkdir -p $(DIST_DIR2)
-	$(CC) $(CFLAGS) -c $< -o $@
-
+	
 $(EXAMPLE1): examples/example1/word_count.c $(LIB)
 	@mkdir -p $(DIST_DIR)
-	$(CC) $(CFLAGS) $< -L$(DIST_DIR) -lmr $(LDFLAGS) -o $@
-
-$(EXAMPLE2): examples/example2/word_count_multi.c $(LIB2)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lmr $(LDFLAGS) -o $@
+$(EXAMPLE2): examples/example2/word_count_multi.c $(LIB)
 	@mkdir -p $(DIST_DIR2)
-	$(CC) $(CFLAGS) $< -L$(DIST_DIR2) -lmr $(LDFLAGS) -o $@
-
-test: all
-	@echo "=================================================="
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lmr $(LDFLAGS) -o $@
+$(EXAMPLE3): examples/example3/edge_cases.c $(LIB)
+	@mkdir -p $(DIST_DIR3)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lmr $(LDFLAGS) -o $@
+$(PRINT_OUT): examples/print_output.c
+	@mkdir -p $(LIB_DIR)
+	$(CC) $(CFLAGS) $< -o $@
+test1: all
+	@echo "-/ \\-"
 	@echo "Esecuzione Test Word Count Singolo (Example 1)..."
-	@echo "=================================================="
-	./$(EXAMPLE1) examples/example1/input_test test_output.txt
-	@echo "Prime 20 righe del risultato (examples/example1/test_output.txt):"
-	@tail -n 20 examples/example1/test_output.txt
+	@echo "-/ \\-"
+	./$(EXAMPLE1) $(INPUT_TEST) test_output.txt
+	@echo "Prime 20 righe del risultato (test_output.txt):"
+	@./$(PRINT_OUT) examples/example1/test_output.txt | head -n 20
+	@echo "\nStatistiche di esecuzione:"
+	@cat examples/example1/test_output.txt.stats
 	@echo ""
-	@echo "=================================================="
+test2: all
+	@echo "-/ \\-"
 	@echo "Esecuzione Test Word Count Multiplo Concorrente (Example 2)..."
-	@echo "=================================================="
-	./$(EXAMPLE2)
+	@echo "-/ \\-"
+	./$(EXAMPLE2) $(INPUT_TEST)
 	@echo "Prime 10 righe del risultato 1 (examples/example2/test_output_lorem.txt):"
-	@tail -n 10 examples/example2/test_output_lorem.txt
+	@./$(PRINT_OUT) examples/example2/test_output_lorem.txt | head -n 10
+	@echo "\nPrime 10 righe del risultato 2 (examples/example2/test_output_test1.txt):"
+	@./$(PRINT_OUT) examples/example2/test_output_test1.txt | head -n 10
 	@echo ""
-	@echo "Prime 10 righe del risultato 2 (examples/example2/test_output_test1.txt):"
-	@tail -n 10 examples/example2/test_output_test1.txt
-
+test3: all
+	@echo "-/ \\-"
+	@echo "Esecuzione Test Edge Cases (Example 3)..."
+	@echo "-/ \\-"
+	./$(EXAMPLE3)
+test: test1 test2 test3
+read: all
+	@if [ -z "$(FILE)" ]; then \
+		echo "Esempio d'uso: make read FILE=percorso/al/file.txt"; \
+		echo "Leggo il file di default (examples/example1/test_output.txt):"; \
+		echo "-/ \\-"; \
+		./$(PRINT_OUT) examples/example1/test_output.txt | head -n 30; \
+	else \
+		./$(PRINT_OUT) $(FILE); \
+	fi
 clean:
-	rm -rf $(DIST_DIR) examples/example1/test_output.txt examples/example1/logs/
-	rm -rf $(DIST_DIR2) examples/example2/test_output_lorem.txt examples/example2/test_output_test1.txt examples/example2/logs/
-
-.PHONY: all test clean
+	rm -rf $(LIB_DIR)
+	rm -rf $(DIST_DIR) examples/example1/test_output.txt examples/example1/test_output.txt.stats examples/example1/logs/
+	rm -rf $(DIST_DIR2) examples/example2/test_output_lorem.txt examples/example2/test_output_lorem.txt.stats examples/example2/test_output_test1.txt examples/example2/test_output_test1.txt.stats examples/example2/logs/
+	rm -rf $(DIST_DIR3) examples/example3/test_output_edge.txt examples/example3/test_output_edge.txt.stats examples/example3/logs/
+.PHONY: all test test1 test2 test3 clean
+.PHONY: all test test1 test2 test3 read clean

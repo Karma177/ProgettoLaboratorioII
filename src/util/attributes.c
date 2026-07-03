@@ -58,9 +58,8 @@ int mr_create(mr_t *mr, const mr_attr_t *attr, mr_mapper_t mapper, mr_reducer_t 
     }
     
     temp->config = *attr;
-    if (attr->log_file != NULL) {
+    if (attr->log_file != NULL)
         temp->config.log_file = strdup(attr->log_file);
-    }
     temp->mapper_f = mapper;
     temp->reducer_f = reducer;
     temp->user_arg = user_arg;
@@ -124,6 +123,10 @@ int mr_attr_set_mapper_threads(mr_attr_t *attr, size_t n) {
         mr_err("mr_attr_set_mapper_threads: parametro 'attr' è NULL.");
         return -1;
     }
+    if (n <= 0) {
+        mr_err("mr_attr_set_mapper_threads: numero di thread minore o uguale a 0 non valido.");
+        return -1;
+    }
     attr->mapper_threads = n;
     return 0;
 }
@@ -133,6 +136,10 @@ int mr_attr_set_reducer_threads(mr_attr_t *attr, size_t n) {
         mr_err("mr_attr_set_reducer_threads: parametro 'attr' è NULL.");
         return -1;
     }
+    if (n <= 0) {
+        mr_err("mr_attr_set_reducer_threads: numero di thread minore o uguale a 0 non valido.");
+        return -1;
+    }
     attr->reducer_threads = n;
     return 0;
 }
@@ -140,6 +147,10 @@ int mr_attr_set_reducer_threads(mr_attr_t *attr, size_t n) {
 int mr_attr_set_queue_size(mr_attr_t *attr, size_t n) {
     if (attr == NULL) {
         mr_err("mr_attr_set_queue_size: parametro 'attr' è NULL.");
+        return -1;
+    }
+    if (n <= 0) {
+        mr_err("mr_attr_set_queue_size: dimensione coda minore o uguale a 0 non valida.");
         return -1;
     }
     attr->queue_size = n;

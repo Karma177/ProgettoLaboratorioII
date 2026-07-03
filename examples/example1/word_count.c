@@ -39,17 +39,19 @@ int word_count_reducer(const char *token, const mr_value_t *values, size_t value
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        fprintf(stderr, "Uso: %s <input_path> <output_path>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
+    const char *input_path = "examples/input_test";
+    const char *output_path = "test_output.txt";
 
-    const char *input_path = argv[1];
-    const char *output_path = argv[2];
+    if (argc >= 3) {
+        input_path = argv[1];
+        output_path = argv[2];
+    } else if (argc == 2) {
+        input_path = argv[1];
+    }
 
     mr_attr_t attr;
     mr_attr_init(&attr);
-    mr_attr_set_mapper_threads(&attr, 4);
+    mr_attr_set_mapper_threads(&attr, 2);
     mr_attr_set_reducer_threads(&attr, 2);
     mr_attr_set_queue_size(&attr, 1024);
     mr_attr_set_log_file(&attr, "word_count.log");

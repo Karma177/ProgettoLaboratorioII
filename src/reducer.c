@@ -10,9 +10,9 @@
 // e rendere la ht abbastanza uniforme
 #define HT_CAPACITY 4099
 
-// ==========================================
-// ===          STRUTTURE DATI            ===
-// ==========================================
+// -/ \-
+// STRUTTURE DATI
+// -/ \-
 
 /*
     Hash table con risoluzione delle collisioni mediante chaining.
@@ -68,9 +68,9 @@ typedef struct {
     mr_t mr;
 } worker_args_t;
 
-// ==========================================
-// ===            PROTOTIPI               ===
-// ==========================================
+// -/ \-
+// PROTOTIPI
+// -/ \-
 
 // Funzioni principali
 int start_reducer(mr_t mr);
@@ -101,9 +101,9 @@ int send_sorted_results(ht_item** sorted_items, size_t item_count);
 size_t fallback_hash(const char* token, size_t token_len, void* user_arg);
 
 
-// ==========================================
-// ===       FUNZIONI PRINCIPALI          ===
-// ==========================================
+// -/ \-
+// FUNZIONI PRINCIPALI
+// -/ \-
 
 int start_reducer(mr_t mr) {
     char log_msg[128];
@@ -263,9 +263,9 @@ int listen_to_mapper(ht *table, mr_t mr) {
 }
 
 
-// ==========================================
-// ===     METODI PRODUTTORE-CONSUMATORE  ===
-// ==========================================
+// -/ \-
+// METODI PRODUTTORE-CONSUMATORE
+// -/ \-
 
 int ht_queue_init(ht_queue_t *q, size_t capacity) {
     q->items = malloc(capacity * sizeof(ht_item*));
@@ -362,7 +362,9 @@ int reducer_worker_thread_func(void* arg) {
             curr_val = curr_val->next;
         }
 
-        args->function(item->key, values, item->counter, framework_emit_result, item, args->user_arg);
+        if (args->function(item->key, values, item->counter, framework_emit_result, item, args->user_arg) != 0) {
+            mr_err("Il reducer fornito dall'utente ha restituito un errore (-1) per un token.");
+        }
         free(values);
     }
     mr_log_event("THREAD_END", "Terminato thread reducer worker");
@@ -406,9 +408,9 @@ int framework_emit_result(const char *token, const void *result, size_t result_s
 }
 
 
-// ==========================================
-// ===          METODI HASH TABLE         ===
-// ==========================================
+// -/ \-
+// METODI HASH TABLE
+// -/ \-
 
 ht* ht_create() {
     ht* table = malloc(sizeof(ht));
@@ -550,9 +552,9 @@ int destroy_chain(ht_item* entry) {
 }
 
 
-// ==========================================
-// ===          METODI AUSILIARI          ===
-// ==========================================
+// -/ \-
+// METODI AUSILIARI
+// // -/ \-
 
 size_t fallback_hash(const char* token, size_t token_len, void* user_arg) {
     (void)user_arg;
@@ -598,34 +600,28 @@ int send_sorted_results(ht_item** sorted_items, size_t item_count) {
     for(size_t i = 0; i < item_count; i++){
         ht_item *item = sorted_items[i];
 
+        // Conta il numero di risultati per questo token
+        int num_results = 0;
+        result_chain *curr = item->results;
+        while (curr != NULL) {
+            num_results++;
+            curr = curr->next;
+        }
+
+        int token_len = strlen(item->key);
+        if(writen(STDOUT_FILENO, &token_len, sizeof(int)) < 0) return -1;
+        if(writen(STDOUT_FILENO, item->key, token_len) < 0) return -1;
+        if(writen(STDOUT_FILENO, &num_results, sizeof(int)) < 0) return -1;
+
         result_chain *curr_res = item->results;
         while(curr_res != NULL){
             results_count++;
-            int token_len = strlen(item->key);
             int result_len = curr_res->value.size;
             
-            if(writen(STDOUT_FILENO, &token_len, sizeof(int)) < 0){
-                mr_err("Errore di scrittura lunghezza token sulla pipe.");
-                return -1;
-            }
-
-            if (writen(STDOUT_FILENO, item->key, token_len) < 0) {
-                mr_err("Errore di scrittura token sulla pipe.");
-                return -1;
-            }
-
-            if (writen(STDOUT_FILENO, &result_len, sizeof(int)) < 0) {
-                mr_err("Errore di scrittura lunghezza risultato sulla pipe.");
-                return -1;
-            }
-
+            if (writen(STDOUT_FILENO, &result_len, sizeof(int)) < 0) return -1;
             if(result_len > 0 && curr_res->value.data != NULL){
-                if(writen(STDOUT_FILENO, curr_res->value.data, result_len) < 0){
-                    mr_err("Errore di scrittura dati risultato sulla pipe.");
-                    return -1;
-                }
+                if(writen(STDOUT_FILENO, curr_res->value.data, result_len) < 0) return -1;
             }
-
             curr_res = curr_res->next;
         }
     }

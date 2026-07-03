@@ -40,53 +40,63 @@ int word_count_reducer(const char *token, const mr_value_t *values, size_t value
 }
 
 typedef struct {
+    mr_t mr;
     const char *input_path;
     const char *output_path;
-    const char *log_file;
 } thread_args_t;
 
 int run_mr(void *arg) {
     thread_args_t *args = (thread_args_t *)arg;
     
-    mr_attr_t attr;
-    mr_attr_init(&attr);
-    mr_attr_set_mapper_threads(&attr, 2);
-    mr_attr_set_reducer_threads(&attr, 1);
-    mr_attr_set_queue_size(&attr, 512);
-    mr_attr_set_log_file(&attr, args->log_file);
-    
-    mr_t mr;
-    if (mr_create(&mr, &attr, word_count_mapper, word_count_reducer, NULL) != 0) {
-        fprintf(stderr, "Errore nella creazione dell'istanza MapReduce per %s\n", args->input_path);
-        mr_attr_destroy(&attr);
-        return -1;
-    }
-    
-    if (mr_start(mr, args->input_path, args->output_path) != 0) {
+    if (mr_start(args->mr, args->input_path, args->output_path) != 0) {
         fprintf(stderr, "Errore durante l'esecuzione del task MapReduce per %s\n", args->input_path);
-        mr_attr_destroy(&attr);
         return -1;
     }
     
-    mr_attr_destroy(&attr);
     return 0;
 }
 
-int main(void) {
-    thread_args_t args1 = {
-        .input_path = "examples/example1/input_test/lorem.txt",
-        .output_path = "test_output_lorem.txt",
-        .log_file = "word_count_lorem.log"
-    };
+int main(int argc, char *argv[]) {
+    const char *base_path = "examples/input_test";
+    if (argc >= 2) {
+        base_path = argv[1];
+    }
 
-    thread_args_t args2 = {
-        .input_path = "examples/example1/input_test/test1",
-        .output_path = "test_output_test1.txt",
-        .log_file = "word_count_test1.log"
-    };
+    // Costruiamo i path interni (es. lorem.txt e test1)
+    char path1[512];
+    char path2[512];
+    snprintf(path1, sizeof(path1), "%s/lorem.txt", base_path);
+    snprintf(path2, sizeof(path2), "%s/test1", base_path);
+
+    mr_t mr1, mr2;
+    mr_attr_t attr1, attr2;
+
+    mr_attr_init(&attr1);
+    mr_attr_set_mapper_threads(&attr1, 2);
+    mr_attr_set_reducer_threads(&attr1, 1);
+    mr_attr_set_queue_size(&attr1, 512);
+    mr_attr_set_log_file(&attr1, "word_count_lorem.log");
+
+    mr_attr_init(&attr2);
+    mr_attr_set_mapper_threads(&attr2, 2);
+    mr_attr_set_reducer_threads(&attr2, 1);
+    mr_attr_set_queue_size(&attr2, 512);
+    mr_attr_set_log_file(&attr2, "word_count_test1.log");
+
+    if (mr_create(&mr1, &attr1, word_count_mapper, word_count_reducer, NULL) != 0) {
+        fprintf(stderr, "Errore nella creazione di mr1\n");
+        return EXIT_FAILURE;
+    }
+    if (mr_create(&mr2, &attr2, word_count_mapper, word_count_reducer, NULL) != 0) {
+        fprintf(stderr, "Errore nella creazione di mr2\n");
+        return EXIT_FAILURE;
+    }
+
+    thread_args_t args1 = { mr1, path1, "test_output_lorem.txt" };
+    thread_args_t args2 = { mr2, path2, "test_output_test1.txt" };
 
     thrd_t t1, t2;
-    printf("Avvio concorrente delle due istanze di MapReduce...\n");
+    printf("Avvio concorrente delle due istanze di MapReduce (usando base path: %s)...\n", base_path);
 
     if (thrd_create(&t1, run_mr, &args1) != thrd_success) {
         fprintf(stderr, "Errore nella creazione del thread 1\n");
@@ -101,6 +111,9 @@ int main(void) {
     int res1 = 0, res2 = 0;
     thrd_join(t1, &res1);
     thrd_join(t2, &res2);
+
+    mr_attr_destroy(&attr1);
+    mr_attr_destroy(&attr2);
 
     if (res1 == 0 && res2 == 0) {
         printf("Entrambe le istanze MapReduce completate con successo!\n");

@@ -11,3 +11,4 @@
 logs/
 dist/
 *.log
+*stress_test/

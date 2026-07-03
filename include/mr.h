@@ -82,8 +82,6 @@ typedef struct{
     value e’ una sequenza opaca di byte di lunghezza value_size .
     Se value_size vale 0 , value puo ’ essere NULL .
 */
-// NOTA: Questa è una funzione placeholder che dice al compilatore quali tipi di parametri aspettarsi.
-// La funzione reale è definita dall'utente e deve essere implementata in modo coerente con questa dichiarazione.
 typedef int (*mr_emit_pair_t)(
     const char *token,
     const void *value,
@@ -99,8 +97,6 @@ typedef int (*mr_emit_pair_t)(
     result e’ una sequenza opaca di byte di lunghezza result_size .
     Se result_size vale 0 , result puo ’ essere NULL .
 */
-// NOTA: Questa è una funzione placeholder che dice al compilatore quali tipi di parametri aspettarsi.
-// La funzione reale è definita dall'utente e deve essere implementata in modo coerente con questa dichiarazione.
 typedef int (*mr_emit_result_t)(
     const char *token,
     const void *result,
@@ -113,8 +109,6 @@ typedef int (*mr_emit_result_t)(
     La funzione mapper riceve una riga logica e puo ’ emettere zero o piu
     coppie <token , valore > usando la funzione emit .
 */
-// NOTA: Questa è una funzione placeholder che dice al compilatore quali tipi di parametri aspettarsi.
-// La funzione reale è definita dall'utente e deve essere implementata in modo coerente con questa dichiarazione.
 typedef int (*mr_mapper_t)(
     const mr_file_line_t *line,
     mr_emit_pair_t emit,
@@ -127,8 +121,6 @@ typedef int (*mr_mapper_t)(
     La funzione reducer riceve un token e tutti i valori associati a token.
     Può emettere zero o più risultati usando la funzione emit.
 */
-// NOTA: Questa è una funzione placeholder che dice al compilatore quali tipi di parametri aspettarsi.
-// La funzione reale è definita dall'utente e deve essere implementata in modo coerente con questa dichiarazione.
 typedef int (*mr_reducer_t)(
     const char *token,
     const mr_value_t *values,

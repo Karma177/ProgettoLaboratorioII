@@ -95,11 +95,11 @@ int start_mapper(mr_t mr){
     size_t workers_created = 0;
     int success = 0;
 
+    worker_args_t w_args;
     if (workers == NULL) {
         mr_err("Impossibile allocare l'array dei thread worker.");
         success = -1;
     } else {
-        worker_args_t w_args;
         w_args.list = list;
         w_args.function = mr->mapper_f;
         w_args.user_arg = mr->user_arg;
@@ -201,7 +201,9 @@ int mapper_worker_thread_func(void *arg){
     // Worker logic
     // null se la coda è chiusa o non esiste
     while ((node = dequeue(args->list)) != NULL) {
-        args->function(&(node->data), framework_emit_pair, NULL, args->user_arg);
+        if (args->function(&(node->data), framework_emit_pair, NULL, args->user_arg) != 0) {
+            mr_err("Il mapper fornito dall'utente ha restituito un errore (-1) per una riga. Riga ignorata.");
+        }
         free((void *)node->data.file_name);
         free((void *)node->data.line);
         free(node);

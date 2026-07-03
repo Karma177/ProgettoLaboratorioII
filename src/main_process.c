@@ -8,8 +8,9 @@
 #include <time.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <threads.h>
 
-// TODO: Aggiungere [FATAL] se l'errore è fatale.
 int start_reducer(mr_t mr);
 int start_main_job(mr_t mr, const char *input_path, const char *output_path, int mapper_write_fd, int reducer_read_fd);
 int serialize_and_send(mr_t mr, const char* filepath, int write_fd, unsigned long *line_counter);
@@ -27,10 +28,65 @@ filename_node* scan_directory(const char* dir_path, filename_node* head);
 static void close_all_fds_except_std(void) {
     int max_fd = sysconf(_SC_OPEN_MAX);
     if (max_fd < 0) max_fd = 1024;
-    for (int i = 3; i < max_fd; i++) {
+    for (int i = 3; i < max_fd; i++){
         close(i);
     }
 }
+
+// Gestione Segnali (SIGINT)
+static mtx_t sig_mtx;
+static once_flag sig_once = ONCE_FLAG_INIT;
+static mr_t active_mrs[128];
+static int active_mrs_count = 0;
+static int sigint_installed = 0;
+
+static void sigint_handler(int sig) {
+    (void)sig;
+    // Quando riceviamo SIGINT, uccidiamo tutti i processi figli registrati
+    for (int i = 0; i < active_mrs_count; i++) {
+        if (active_mrs[i]->mapper > 0) {
+            kill(active_mrs[i]->mapper, SIGKILL);
+        }
+        if (active_mrs[i]->reducer > 0) {
+            kill(active_mrs[i]->reducer, SIGKILL);
+        }
+    }
+    // Uscita immediata dal processo principale
+    _exit(1);
+}
+
+static void init_sig_mtx(void) {
+    mtx_init(&sig_mtx, mtx_plain);
+}
+
+static void register_instance_for_signals(mr_t mr) {
+    call_once(&sig_once, init_sig_mtx);
+    mtx_lock(&sig_mtx);
+    if (!sigint_installed) {
+        struct sigaction sa;
+        sa.sa_handler = sigint_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        sigaction(SIGINT, &sa, NULL);
+        sigint_installed = 1;
+    }
+    if (active_mrs_count < 128) {
+        active_mrs[active_mrs_count++] = mr;
+    }
+    mtx_unlock(&sig_mtx);
+}
+
+static void unregister_instance_for_signals(mr_t mr) {
+    mtx_lock(&sig_mtx);
+    for (int i = 0; i < active_mrs_count; i++) {
+        if (active_mrs[i] == mr) {
+            active_mrs[i] = active_mrs[--active_mrs_count];
+            break;
+        }
+    }
+    mtx_unlock(&sig_mtx);
+}
+// ^^
 
 int mr_start(mr_t mr, const char *input_path, const char *output_path){
     char log_msg[256];
@@ -46,6 +102,9 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     #if DEBUG
     mr_debug("mr_start: Avvio dell'esecuzione MapReduce nel main process.");
     #endif
+
+    // Registra questa istanza per la cattura di SIGINT
+    register_instance_for_signals(mr);
 
     // TODO: proper error handling
     int main_to_mapper[2];
@@ -210,20 +269,23 @@ int start_main_job(mr_t mr, const char *input_path, const char *output_path, int
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     double elapsed = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
 
-    FILE *f_out = fopen(output_path, "a");
+    char stats_path[1024];
+    snprintf(stats_path, sizeof(stats_path), "%s.stats", output_path);
+    FILE *f_out = fopen(stats_path, "w");
     if (f_out) {
-        fprintf(f_out, "\n--- Statistiche di esecuzione ---\n");
+        fprintf(f_out, "--- Statistiche di esecuzione ---\n");
         fprintf(f_out, "Righe processate dal Main process: %lu\n", line_n);
         fprintf(f_out, "Tempo di esecuzione: %.4f secondi\n", elapsed);
         fprintf(f_out, "Thread utilizzati: %zu mapper, %zu reducer\n", mr->config.mapper_threads, mr->config.reducer_threads);
-        fprintf(f_out, "Logfile: %s\n", mr->config.log_file);
+        fprintf(f_out, "Logfile: %s\n", mr->config.log_file ? mr->config.log_file : "default");
         fprintf(f_out, "Queue size: %zu\n", mr->config.queue_size);
         fprintf(f_out, "Input path: %s\n", input_path);
-        fprintf(f_out, "Output path: %s\n", output_path );
+        fprintf(f_out, "Output path: %s\n", output_path);
         fclose(f_out);
     }
 
     mr_destroy(mr);
+    unregister_instance_for_signals(mr);
     return 0;
 }
 
@@ -367,41 +429,61 @@ int listen_to_reducer(int read_fd, const char* output_path){
         readn(read_fd, token, token_length);
         token[token_length] = '\0';
 
-        // Prendiamo il risultato
-        int result_length;
-        readn(read_fd, &result_length, sizeof(int));
-        if(result_length <= 0 || result_length > LIMITE_RAGIONEVOLE){
-            errno = EINVAL;
-            char err_msg[128];
-            snprintf(err_msg, sizeof(err_msg), "Lunghezza risultato non valida ricevuta dal Reducer: %d", result_length);
-            mr_err(err_msg);
+        int num_results;
+        if (readn(read_fd, &num_results, sizeof(int)) <= 0) {
             free(token);
-            if (out_file && out_file != stdout) fclose(out_file);
-            return -1;
+            break;
         }
 
-        void *result = NULL;
-        if (result_length > 0) {
-            result = malloc(result_length);
-            if (!result) {
-                free(token);
-                if (out_file && out_file != stdout) fclose(out_file);
-                return -1;
-            }
-            readn(read_fd, result, result_length);
-        }
-
-        // Scriviamo sul file di output
+        // Scriviamo sul file di output il token
         if (out_file) {
-            fprintf(out_file, "%s: ", token);
-            if (result && result_length > 0) {
-                fwrite(result, 1, result_length, out_file);
+            fwrite(&token_length, sizeof(int), 1, out_file);
+            fwrite(token, 1, token_length, out_file);
+        }
+
+        // TODO: check
+        int i = 0;
+        int error_occurred = 0;
+        while (i < num_results) {
+            int result_length;
+            if (readn(read_fd, &result_length, sizeof(int)) <= 0) {
+                error_occurred = 1;
+                break;
             }
-            fprintf(out_file, "\n");
+
+            if (result_length > 0) {
+                unsigned char *result = malloc(result_length);
+                if (!result) {
+                    mr_err("Errore allocazione memoria nel processo principale.");
+                    error_occurred = 1;
+                    break;
+                }
+                readn(read_fd, result, result_length);
+
+                if (out_file) {
+                    fwrite(&result_length, sizeof(int), 1, out_file);
+                    fwrite(result, 1, result_length, out_file);
+                }
+                free(result);
+            } else {
+                if (out_file) {
+                    fwrite(&result_length, sizeof(int), 1, out_file);
+                }
+            }
+            i++;
+        }
+
+        if (error_occurred) {
+            free(token);
+            break;
+        }
+
+        if (out_file) {
+            char newline = '\n';
+            fwrite(&newline, 1, 1, out_file);
         }
 
         free(token);
-        if (result) free(result);
     }
 
     if (out_file != NULL && out_file != stdout) {
