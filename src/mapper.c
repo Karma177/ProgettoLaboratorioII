@@ -16,11 +16,11 @@ typedef struct {
     node_t *tail;
     size_t size;
     size_t queue_max_size;
-    int closed; // Flag (0 o 1) per segnalare quando l'input è finito (EOF)
+    int closed; // EOF flag
     
     mtx_t mutex;
-    cnd_t full; // CondVar per far aspettare il lettore se la coda è piena
-    cnd_t empty; // CondVar per far aspettare i worker se non ci sono elementi
+    cnd_t full; // Segnala coda piena al reader
+    cnd_t empty; // Segnala coda vuota ai worker
 } mr_t_list;
 
 typedef struct {
@@ -227,9 +227,8 @@ int main_listener(mr_t_list* coda, int main_to_mapper){
         // status == 1 indica elemento letto e accodato con successo
         if(item != NULL){
             queue(coda, item);
-            // item=NULL superfluo; teoricamente non è possibile un inserimento doppio del solito item, a patto che
-            // read_item_from_pipe ritorni >0 nonostante ci sia stato un errore..
-            // guardrail extra
+            // Il controllo di item != NULL garantisce che in caso di fallimento interno di read_item_from_pipe
+            // non accodiamo dati vuoti o duplicati.
             item = NULL;
         }
     }
@@ -248,8 +247,7 @@ int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item){
     (void)coda;
     size_t file_name_len;
 
-    // leggiamo la lunghezza del nome del file 
-    // readn restituisce 0 == EOF 
+    // readn restituisce 0 == EOF regolare
     ssize_t res = readn(fd_pipe, &file_name_len, sizeof(size_t));
     if (res == 0)
         return 0; // EOF regolare
@@ -300,7 +298,7 @@ int read_item_from_pipe(mr_t_list* coda, int fd_pipe, node_t** item){
         return -1;
     }
 
-    // alloco lo spazio e leggo il testo della riga
+    // alloco memoria ed estraggo il payload stringa
     char *line = malloc(line_len + 1);
     if (!line) {
         free(file_name);

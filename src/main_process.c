@@ -117,10 +117,7 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     }
     mr_log_event("PIPE_CREATION", "Pipe di comunicazione create con successo.");
 
-    /*
-        MAPPER:
-        sezione di codice dedicata al mapper.
-    */
+    // -- PROCESSO MAPPER --
     size_t mapper_pid = fork();
     if(mapper_pid == 0){
         // Logica mapper
@@ -147,10 +144,7 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     snprintf(log_msg, sizeof(log_msg), "Processo mapper creato con PID %zu", mapper_pid);
     mr_log_event("PROCESS_CREATION", log_msg);
 
-    /*
-        REDUCER:
-        sezione di codice dedicata al reducer.
-    */
+    // -- PROCESSO REDUCER --
     size_t reducer_pid = fork();
     if(reducer_pid == 0){
         // Logica reducer
@@ -177,10 +171,7 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     snprintf(log_msg, sizeof(log_msg), "Processo reducer creato con PID %zu", reducer_pid);
     mr_log_event("PROCESS_CREATION", log_msg);
 
-    /*
-        MAIN PROCESS:
-        sezione di codice dedicata al processo principale.
-    */
+    // -- PROCESSO PRINCIPALE --
     mr_log("Inizializzazione main process...");
 
     close(main_to_mapper[0]);
@@ -222,7 +213,7 @@ int mr_start(mr_t mr, const char *input_path, const char *output_path){
     return start_main_job(mr, input_path, resolved_output_path, main_to_mapper[1], reducer_to_main[0]);
 }
 
-// Sezione "Serialize and Send": tutto ciò necessario alla scansione e l'invio dei file al mapper.
+// -- FASE DI LETTURA E SERIALIZZAZIONE --
 int start_main_job(mr_t mr, const char *input_path, const char *output_path, int mapper_write_fd, int reducer_read_fd){
     char log_msg[256];
     struct stat path_stat;
@@ -262,7 +253,7 @@ int start_main_job(mr_t mr, const char *input_path, const char *output_path, int
     close(mapper_write_fd);
     snprintf(log_msg, sizeof(log_msg), "Inviate %lu righe al mapper", line_n);
     mr_log_event("METRIC_LINES", log_msg);
-    listen_to_reducer(reducer_read_fd, output_path);
+    int ret = listen_to_reducer(reducer_read_fd, output_path);
     close(reducer_read_fd);
     wait_for_others(mr);
     
@@ -286,7 +277,7 @@ int start_main_job(mr_t mr, const char *input_path, const char *output_path, int
 
     mr_destroy(mr);
     unregister_instance_for_signals(mr);
-    return 0;
+    return ret;
 }
 
 // Inserimento ordinato (lessicografico)
@@ -396,7 +387,7 @@ int serialize_and_send(mr_t mr, const char* filepath, int write_fd, unsigned lon
     return 0;
 }
 
-// Sezione di ascolto dal reducer: tutto ciò che è necessario per l'ascolto dal reducer.
+// -- FASE DI ASCOLTO E SCRITTURA OUTPUT --
 int listen_to_reducer(int read_fd, const char* output_path){
     FILE* out_file = NULL;
     char log_msg[512];
@@ -414,6 +405,11 @@ int listen_to_reducer(int read_fd, const char* output_path){
         out_file = stdout;
     }
 
+    if (out_file) {
+        fprintf(out_file, "[byte_token],[token],[byte_result1],[hex_result1]…[byte_resultN],[hex_resultN]\n");
+    }
+
+    int ret_code = 0;
     int token_length;
     while(readn(read_fd, &token_length, sizeof(int)) == sizeof(int)){
         // Prendiamo il token
@@ -431,14 +427,15 @@ int listen_to_reducer(int read_fd, const char* output_path){
 
         int num_results;
         if (readn(read_fd, &num_results, sizeof(int)) <= 0) {
+            mr_err("Errore nella lettura del numero di risultati dalla pipe.");
             free(token);
+            ret_code = -1;
             break;
         }
 
-        // Scriviamo sul file di output il token
+        // Scriviamo sul file di output il token in formato testuale
         if (out_file) {
-            fwrite(&token_length, sizeof(int), 1, out_file);
-            fwrite(token, 1, token_length, out_file);
+            fprintf(out_file, "%d,%s", token_length, token);
         }
 
         // TODO: check
@@ -461,26 +458,28 @@ int listen_to_reducer(int read_fd, const char* output_path){
                 readn(read_fd, result, result_length);
 
                 if (out_file) {
-                    fwrite(&result_length, sizeof(int), 1, out_file);
-                    fwrite(result, 1, result_length, out_file);
+                    fprintf(out_file, ",%d,", result_length);
+                    for (int j = 0; j < result_length; j++) {
+                        fprintf(out_file, "%02x", result[j]);
+                    }
                 }
                 free(result);
             } else {
                 if (out_file) {
-                    fwrite(&result_length, sizeof(int), 1, out_file);
+                    fprintf(out_file, ",%d,", result_length);
                 }
             }
             i++;
         }
 
         if (error_occurred) {
+            ret_code = -1;
             free(token);
             break;
         }
 
         if (out_file) {
-            char newline = '\n';
-            fwrite(&newline, 1, 1, out_file);
+            fprintf(out_file, "\n");
         }
 
         free(token);
@@ -491,7 +490,7 @@ int listen_to_reducer(int read_fd, const char* output_path){
         snprintf(log_msg, sizeof(log_msg), "Chiuso file di output: %s", output_path);
         mr_log_event("FILE_CLOSE", log_msg);
     }
-    return 0;
+    return ret_code;
 }
 
 // Legge ESATTAMENTE 'n' byte bloccandosi finché non li ha presi tutti (o finché non c'è EOF/errore)
@@ -534,7 +533,7 @@ ssize_t writen(int fd, const void *buf, size_t n) {
     return n; // Ritorna quanti byte è riuscito a scrivere davvero
 }
 
-// Sezione dedicata ai metodi di pulizia e termine del programma
+// -- ATTESA E PULIZIA --
 int wait_for_others(mr_t mr){
     waitpid(mr->mapper, NULL, 0);
     waitpid(mr->reducer, NULL, 0);

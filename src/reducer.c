@@ -10,9 +10,7 @@
 // e rendere la ht abbastanza uniforme
 #define HT_CAPACITY 4099
 
-// -/ \-
-// STRUTTURE DATI
-// -/ \-
+// --- STRUTTURE DATI ----
 
 /*
     Hash table con risoluzione delle collisioni mediante chaining.
@@ -68,9 +66,7 @@ typedef struct {
     mr_t mr;
 } worker_args_t;
 
-// -/ \-
-// PROTOTIPI
-// -/ \-
+// --- PROTOTIPI ----
 
 // Funzioni principali
 int start_reducer(mr_t mr);
@@ -101,9 +97,7 @@ int send_sorted_results(ht_item** sorted_items, size_t item_count);
 size_t fallback_hash(const char* token, size_t token_len, void* user_arg);
 
 
-// -/ \-
-// FUNZIONI PRINCIPALI
-// -/ \-
+// --- FUNZIONI PRINCIPALI ----
 
 int start_reducer(mr_t mr) {
     char log_msg[128];
@@ -263,9 +257,7 @@ int listen_to_mapper(ht *table, mr_t mr) {
 }
 
 
-// -/ \-
-// METODI PRODUTTORE-CONSUMATORE
-// -/ \-
+// --- METODI PRODUTTORE-CONSUMATORE ----
 
 int ht_queue_init(ht_queue_t *q, size_t capacity) {
     q->items = malloc(capacity * sizeof(ht_item*));
@@ -408,9 +400,7 @@ int framework_emit_result(const char *token, const void *result, size_t result_s
 }
 
 
-// -/ \-
-// METODI HASH TABLE
-// -/ \-
+// --- METODI HASH TABLE ----
 
 ht* ht_create() {
     ht* table = malloc(sizeof(ht));
@@ -552,9 +542,7 @@ int destroy_chain(ht_item* entry) {
 }
 
 
-// -/ \-
-// METODI AUSILIARI
-// // -/ \-
+// --- METODI AUSILIARI ----
 
 size_t fallback_hash(const char* token, size_t token_len, void* user_arg) {
     (void)user_arg;

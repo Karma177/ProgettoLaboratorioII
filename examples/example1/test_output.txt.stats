@@ -1,8 +1,0 @@
---- Statistiche di esecuzione ---
-Righe processate dal Main process: 316933
-Tempo di esecuzione: 105.9860 secondi
-Thread utilizzati: 2 mapper, 2 reducer
-Logfile: word_count.log
-Queue size: 1024
-Input path: examples/input_test
-Output path: /home/karma17/Documents/synched/github/ProgettoLaboratorioII/examples/example1/test_output.txt

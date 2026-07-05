@@ -62,11 +62,16 @@ int main(int argc, char *argv[]) {
         base_path = argv[1];
     }
 
-    // Costruiamo i path interni (es. lorem.txt e test1)
+    // Costruiamo i path interni (es. lorem.txt e test1, o book1 e book2 per stress test)
     char path1[512];
     char path2[512];
-    snprintf(path1, sizeof(path1), "%s/lorem.txt", base_path);
-    snprintf(path2, sizeof(path2), "%s/test1", base_path);
+    if (strstr(base_path, "stress") != NULL) {
+        snprintf(path1, sizeof(path1), "%s/book1", base_path);
+        snprintf(path2, sizeof(path2), "%s/book2", base_path);
+    } else {
+        snprintf(path1, sizeof(path1), "%s/lorem.txt", base_path);
+        snprintf(path2, sizeof(path2), "%s/test1", base_path);
+    }
 
     mr_t mr1, mr2;
     mr_attr_t attr1, attr2;

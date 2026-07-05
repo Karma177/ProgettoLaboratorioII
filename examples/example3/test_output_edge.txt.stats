@@ -1,8 +1,0 @@
---- Statistiche di esecuzione ---
-Righe processate dal Main process: 10
-Tempo di esecuzione: 0.0010 secondi
-Thread utilizzati: 1 mapper, 1 reducer
-Logfile: edge_cases.log
-Queue size: 10
-Input path: examples/input_test/lorem.txt
-Output path: /home/karma17/Documents/synched/github/ProgettoLaboratorioII/examples/example3/test_output_edge.txt

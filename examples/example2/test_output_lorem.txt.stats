@@ -1,8 +1,0 @@
---- Statistiche di esecuzione ---
-Righe processate dal Main process: 10
-Tempo di esecuzione: 0.0021 secondi
-Thread utilizzati: 2 mapper, 1 reducer
-Logfile: word_count_lorem.log
-Queue size: 512
-Input path: examples/input_test/lorem.txt
-Output path: /home/karma17/Documents/synched/github/ProgettoLaboratorioII/examples/example2/test_output_lorem.txt
